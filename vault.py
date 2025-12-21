@@ -19,16 +19,16 @@ st.set_page_config(page_title="Vanguard Vault | ADELL Tech", layout="wide", page
 apply_custom_theme()
 
 # Connect to Supabase via secrets.toml
-# Manually pull secrets to bypass the connection error
-supabase_url = st.secrets["connections"]["supabase"]["url"]
-supabase_key = st.secrets["connections"]["supabase"]["key"]
+# Manually load the secrets to avoid the search error
+st_url = st.secrets["connections"]["supabase"]["url"]
+st_key = st.secrets["connections"]["supabase"]["key"]
 
-# Initialize connection manually
+# Connect using the manual keys
 conn = st.connection(
     "supabase",
     type=SupabaseConnection,
-    url=supabase_url,
-    key=supabase_key
+    url=st_url,
+    key=st_key
 )
 
 # --- HELPER: PASSWORD STRENGTH ---
