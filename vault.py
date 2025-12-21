@@ -142,7 +142,7 @@ else:
             receipt = f"VANGUARD VAULT RECEIPT\nOperator: {st.session_state.user}\nRefills: {refills}\nDate: {datetime.now().strftime('%Y-%m-%d')}"
             st.download_button("📄 DOWNLOAD RECEIPT", receipt, f"Receipt_{st.session_state.user}.txt")
         
-        menu = ["AES Symmetric", "RSA Asymmetric", "Steganography", "Hashing", "ℹ️ About"]
+        menu = ["AES Symmetric", "RSA Asymmetric", "Steganography", "Hashing", "Diffie-Hellman", "ℹ️ About"]
         if st.session_state.user == ADMIN_USERNAME: menu.insert(0, "👑 ADMIN")
         mode = st.selectbox("Select Module", menu)
 
@@ -185,33 +185,88 @@ else:
                     st.download_button(f"Download {up.name}.aes", f.encrypt(up.read()), f"{up.name}.aes")
                     increment_usage("AES_FILE")
 
-    # --- RSA ---
+    # --- RSA MODULE (HYBRID + TEXT) ---
     elif mode == "RSA Asymmetric":
         st.header("RSA Asymmetric Suite")
-        tk, te, td = st.tabs(["🔑 KEYGEN", "🔒 ENCRYPT", "🔓 DECRYPT"])
+        tk, te, td = st.tabs(["🔑 KEYGEN", "🔒 ENCRYPT (Text & Files)", "🔓 DECRYPT"])
+        
         with tk:
             if st.button("Generate RSA Pair") and check_usage_limit():
                 private_key = rsa.generate_private_key(65537, 2048)
                 pem_p = private_key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()).decode()
                 pem_pub = private_key.public_key().public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo).decode()
-                st.code(pem_pub, label="Public Key"); st.code(pem_p, label="Private Key")
+                st.code(pem_pub, label="Public Key (Share This)"); st.code(pem_p, label="Private Key (KEEP SECRET)")
+                increment_usage("RSA_KEYGEN")
+
         with te:
+            st.subheader("Encryption")
             pub_in = st.text_area("Recipient Public Key")
-            msg_in = st.text_input("Message")
-            if st.button("Encrypt") and check_usage_limit():
-                try:
+            m_type = st.radio("What are you locking?", ["Short Message", "Large File/Video"])
+            
+            if m_type == "Short Message":
+                msg_in = st.text_input("Message")
+                if st.button("Encrypt Message") and check_usage_limit():
+                    try:
+                        pub = serialization.load_pem_public_key(pub_in.encode())
+                        cipher = pub.encrypt(msg_in.encode(), padding.OAEP(padding.MGF1(hashes.SHA256()), hashes.SHA256(), None))
+                        st.code(base64.b64encode(cipher).decode())
+                        increment_usage("RSA_MSG")
+                    except: st.error("Check Public Key")
+            else:
+                up_f = st.file_uploader("Upload File")
+                if up_f and pub_in and st.button("RSA-Lock File") and check_usage_limit():
+                    # HYBRID: AES for file, RSA for Key
+                    s_key = Fernet.generate_key()
+                    f_aes = Fernet(s_key)
+                    enc_file = f_aes.encrypt(up_f.read())
                     pub = serialization.load_pem_public_key(pub_in.encode())
-                    cipher = pub.encrypt(msg_in.encode(), padding.OAEP(padding.MGF1(hashes.SHA256()), hashes.SHA256(), None))
-                    st.code(base64.b64encode(cipher).decode())
-                except: st.error("Check Public Key")
+                    enc_s_key = pub.encrypt(s_key, padding.OAEP(padding.MGF1(hashes.SHA256()), hashes.SHA256(), None))
+                    
+                    st.success("File Ready!")
+                    st.code(base64.b64encode(enc_s_key).decode(), label="Recipient's Unlock Key (Send this via Text)")
+                    st.download_button("Download Encrypted File", enc_file, f"{up_f.name}.vault")
+                    increment_usage("RSA_FILE")
+
         with td:
-            priv_in = st.text_area("Private Key")
-            cip_in = st.text_area("Ciphertext")
+            priv_in = st.text_area("Your Private Key")
+            cip_in = st.text_area("Encrypted Key or Message")
             if st.button("Decrypt"):
                 try:
                     priv = serialization.load_pem_private_key(priv_in.encode(), None)
-                    st.success(priv.decrypt(base64.b64decode(cip_in.encode()), padding.OAEP(padding.MGF1(hashes.SHA256()), hashes.SHA256(), None)).decode())
-                except: st.error("Failed")
+                    res = priv.decrypt(base64.b64decode(cip_in.encode()), padding.OAEP(padding.MGF1(hashes.SHA256()), hashes.SHA256(), None))
+                    st.success(f"Decrypted: {res.decode()}")
+                except: st.error("Decryption Failed")
+
+    # --- DIFFIE-HELLMAN MODULE ---
+    elif mode == "Diffie-Hellman":
+        st.header("Diffie-Hellman Key Exchange")
+        st.info("Establish a secret key with someone else without ever sending the key itself.")
+        from cryptography.hazmat.primitives.asymmetric import dh
+        from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+
+        # Standard DH Parameters (Group 14)
+        pn = dh.generate_parameters(generator=2, key_size=2048)
+        
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("1. Generate My DH Private/Public"):
+                priv = pn.generate_private_key()
+                pub = priv.public_key().public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo).decode()
+                st.session_state.dh_priv = priv
+                st.code(pub, label="Send this Public Part to Partner")
+        
+        with c2:
+            partner_pub_pem = st.text_area("2. Paste Partner's Public Part")
+            if st.button("3. Compute Shared Secret") and 'dh_priv' in st.session_state:
+                try:
+                    p_pub = serialization.load_pem_public_key(partner_pub_pem.encode())
+                    shared = st.session_state.dh_priv.exchange(p_pub)
+                    # Derive a usable 32-byte key
+                    derived = HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=b'dh-exchange').derive(shared)
+                    st.success("Shared Secret Established!")
+                    st.code(base64.urlsafe_b64encode(derived).decode(), label="Use this in AES Module")
+                    increment_usage("DH_EXCHANGE")
+                except: st.error("Invalid Partner Key")
 
     # --- STEGANOGRAPHY ---
     elif mode == "Steganography":
