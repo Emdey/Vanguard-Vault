@@ -2,97 +2,105 @@ import streamlit as st
 
 def apply_custom_theme():
     """
-    Midnight Glass UI with 'Deep Sea Cyan' accents. 
-    Optimized for eye comfort and professional aesthetics.
+    Applies the Vanguard Vault signature Deep Cyan & Neon Glow theme.
     """
     st.markdown("""
         <style>
-        /* 1. Deep Midnight Blue Background */
+        /* Main App Background - Deep Cyan Abyss */
         .stApp {
-            background: radial-gradient(circle at top, #06101f 0%, #020811 100%);
-            color: #d1d9e0;
-        }
-        
-        /* 2. Soft Glassmorphism Panels */
-        [data-testid="stVerticalBlock"] > div > div > div {
-            background: rgba(255, 255, 255, 0.02);
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
-            border-radius: 12px;
-            border: 1px solid rgba(0, 212, 255, 0.08);
-            padding: 25px;
-            margin-bottom: 15px;
+            background-color: #00080a;
+            background-image: radial-gradient(circle at 50% 50%, #001a1a 0%, #00080a 100%);
+            color: #e0faff;
         }
 
-        /* 3. Sidebar Glass Effect */
+        /* Sidebar Styling */
         section[data-testid="stSidebar"] {
-            background-color: rgba(4, 12, 24, 0.85) !important;
-            backdrop-filter: blur(20px);
-            border-right: 1px solid rgba(0, 212, 255, 0.1);
+            background-color: #000506;
+            border-right: 1px solid #00f2ff33;
         }
 
-        /* 4. Deep Sea Cyan Buttons */
-        .stButton>button {
-            background: rgba(0, 180, 216, 0.05);
-            color: #00b4d8;
-            border: 1px solid rgba(0, 180, 216, 0.4);
-            border-radius: 6px;
-            transition: all 0.4s ease;
-            font-weight: 500;
-        }
-        
-        .stButton>button:hover {
-            background: rgba(0, 180, 216, 0.2);
-            color: #ffffff;
-            border: 1px solid #00d4ff;
-            box-shadow: 0 0 15px rgba(0, 212, 255, 0.3);
-        }
-
-        /* 5. Blinking Status Dot */
-        .status-dot {
-            height: 10px; width: 10px;
-            background-color: #00ff88;
-            border-radius: 50%;
-            display: inline-block;
-            margin-right: 8px;
-            box-shadow: 0 0 8px #00ff88;
-            animation: blink 2s infinite;
-        }
-
-        @keyframes blink {
-            0% { opacity: 1; }
-            50% { opacity: 0.3; }
-            100% { opacity: 1; }
-        }
-
-        /* 6. Inputs - Dark & Inset */
-        .stTextInput>div>div>input, .stTextArea>div>div>textarea {
-            background-color: rgba(0, 0, 0, 0.3) !important;
-            color: #00b4d8 !important;
-            border: 1px solid rgba(0, 180, 216, 0.2) !important;
-        }
-
+        /* Headers and Titles */
         h1, h2, h3 {
-            color: #ffffff !important;
-            font-weight: 300;
-            letter-spacing: -0.5px;
+            color: #00f2ff !important;
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            text-shadow: 0 0 15px rgba(0, 242, 255, 0.4);
         }
 
-        /* Tab Styling */
-        .stTabs [data-baseweb="tab-list"] { gap: 10px; }
-        .stTabs [data-baseweb="tab"] {
+        /* Neon Cyan Buttons */
+        .stButton>button {
+            width: 100%;
+            border-radius: 4px;
             background-color: transparent;
-            color: #8892b0;
-        }
-        .stTabs [aria-selected="true"] {
-            color: #00d4ff !important;
-            border-bottom-color: #00d4ff !important;
+            color: #00f2ff;
+            border: 1px solid #00f2ff;
+            transition: all 0.3s ease-in-out;
+            font-weight: bold;
         }
 
-        #MainMenu, footer {visibility: hidden;}
+        .stButton>button:hover {
+            background-color: #00f2ff1a;
+            color: #ffffff;
+            border: 1px solid #ffffff;
+            box-shadow: 0 0 12px #00f2ff;
+        }
+
+        /* Input Fields - Darkened Cyan */
+        .stTextInput>div>div>input, .stTextArea>div>div>textarea {
+            background-color: #001215 !important;
+            color: #00f2ff !important;
+            border: 1px solid #00f2ff44 !important;
+            border-radius: 4px;
+        }
+
+        /* Progress Bar */
+        .stProgress > div > div > div > div {
+            background-image: linear-gradient(to right, #004d4d, #00f2ff);
+        }
+
+        /* Tabs Styling */
+        .stTabs [data-baseweb="tab"] {
+            color: #80ced6;
+        }
+
+        .stTabs [aria-selected="true"] {
+            color: #00f2ff !important;
+            border-bottom-color: #00f2ff !important;
+        }
+
+        /* Success Messages */
+        .stAlert {
+            background-color: #001215;
+            border: 1px solid #00ffaa;
+            color: #00ffaa;
+        }
         </style>
-        """, unsafe_allow_html=True)
+    """, unsafe_allow_html=True)
 
 def show_status():
-    """Call this in the sidebar to show the live status indicator"""
-    st.sidebar.markdown('<div><span class="status-dot"></span><span style="color: #00ff88; font-size: 14px; font-weight: bold;">SYSTEM ACTIVE</span></div>', unsafe_allow_html=True)
+    """
+    Displays the 'SYSTEM ONLINE' pulse indicator with Cyan Glow.
+    """
+    st.sidebar.markdown("""
+        <div style="display: flex; align-items: center; padding: 12px; border: 1px solid #00f2ff22; border-radius: 4px; background: #000c0e;">
+            <div style="
+                width: 10px; 
+                height: 10px; 
+                background-color: #00f2ff; 
+                border-radius: 50%; 
+                margin-right: 12px;
+                box-shadow: 0 0 15px #00f2ff;
+                animation: scan 2s infinite;">
+            </div>
+            <span style="color: #00f2ff; font-family: monospace; font-size: 0.75rem; letter-spacing: 1px;">CORE VANGUARD: ACTIVE</span>
+        </div>
+        
+        <style>
+        @keyframes scan {
+            0% { opacity: 1; box-shadow: 0 0 5px #00f2ff; }
+            50% { opacity: 0.4; box-shadow: 0 0 20px #00f2ff; }
+            100% { opacity: 1; box-shadow: 0 0 5px #00f2ff; }
+        }
+        </style>
+    """, unsafe_allow_html=True)

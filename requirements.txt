@@ -3,3 +3,4 @@ cryptography
 pandas
 st-supabase-connection
 supabase
+Pillow
