@@ -120,25 +120,67 @@ if 'user' not in st.session_state:
             except: st.error("Identity already exists in database.")
 
 else:
-    # --- SIDEBAR & STATUS ---
+    # --- SIDEBAR (CONSOLIDATED USER TERMINAL) ---
     with st.sidebar:
         st.markdown(f"### OPERATOR: {st.session_state.user}")
         show_status() 
         
-        used = get_usage(st.session_state.user)
-        st.progress(min(used/FREE_LIMIT, 1.0))
-        st.caption(f"System Capacity: {used}/{FREE_LIMIT}")
+        # 1. Fetch Fresh User Data
+        userData = conn.table("users").select("*").eq("username", st.session_state.user).execute().data[0]
+        used = userData['op_count']
+        refills = userData['payment_count']
+        
+        # 2. Display Credits & Refill History
+        st.progress(min(used/5, 1.0))
+        st.caption(f"Credits Remaining: {5 - used} / 5")
+        
+        st.markdown(f"""
+            <div style="background: #001515; padding: 10px; border-radius: 5px; border: 1px solid #00f2ff; margin-bottom: 10px;">
+                <p style="margin:0; font-size: 0.8rem; color: #00f2ff;">Total Refills Purchased: <b>{refills}</b></p>
+                <p style="margin:0; font-size: 0.7rem; color: #888;">Thank you for supporting ADELL Tech</p>
+            </div>
+        """, unsafe_allow_html=True)
+
+        # --- RECEIPT GENERATOR ---
+        if refills > 0:
+            receipt_content = f"""
+            ====================================
+            VANGUARD VAULT OFFICIAL RECEIPT
+            ====================================
+            Operator: {st.session_state.user}
+            Status: VERIFIED USER
+            Total Refills: {refills}
+            Total Investment: ₦{refills * 200}
+            Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}
+            ====================================
+            SECURED BY ADELL TECH PROTOCOLS
+            ====================================
+            """
+            st.download_button(
+                label="📄 DOWNLOAD PAYMENT PROOF",
+                data=receipt_content,
+                file_name=f"Vault_Receipt_{st.session_state.user}.txt",
+                mime="text/plain"
+            )
         
         st.markdown("---")
+        
+        # 3. Terminal Logs
         st.markdown("📜 **TERMINAL LOGS**")
         if 'history' in st.session_state:
             for log in st.session_state.history[:3]:
                 st.markdown(f"<p style='font-family:monospace; font-size:0.7rem; color:#80ced6; margin:0;'>{log}</p>", unsafe_allow_html=True)
         
+        st.markdown("---")
+
+        # 4. Navigation Menu
         menu = ["AES Symmetric", "RSA Asymmetric", "Steganography", "Hashing", "ℹ️ About"]
-        if st.session_state.user == ADMIN_USERNAME: menu.insert(0, "👑 ADMIN")
+        if st.session_state.user == ADMIN_USERNAME:
+            menu.insert(0, "👑 ADMIN")
+        
         mode = st.selectbox("Select Module", menu)
         
+        # 5. Session Control
         if st.button("Terminate Session"):
             del st.session_state.user
             st.rerun()
@@ -177,16 +219,86 @@ else:
     # --- RSA MODULE ---
     elif mode == "RSA Asymmetric":
         st.header("RSA Asymmetric Suite")
-        t_keygen, t_info = st.tabs(["🔑 KEYGEN", "⚙️ SYSTEM INFO"])
+        t_keygen, t_encrypt, t_decrypt = st.tabs(["🔑 KEYGEN", "🔒 ENCRYPT", "🔓 DECRYPT"])
+        
         with t_keygen:
+            st.info("RSA keys come in pairs. Share your **Public Key** to receive secrets. Keep your **Private Key** hidden.")
             if st.button("Generate 2048-bit RSA Pair") and check_usage_limit():
-                priv = rsa.generate_private_key(65537, 2048)
-                st.session_state.pub_key = priv.public_key().public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo).decode()
+                private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+                public_key = private_key.public_key()
+                
+                pem_private = private_key.private_bytes(
+                    encoding=serialization.Encoding.PEM,
+                    format=serialization.PrivateFormat.PKCS8,
+                    encryption_algorithm=serialization.NoEncryption()
+                ).decode()
+                
+                pem_public = public_key.public_bytes(
+                    encoding=serialization.Encoding.PEM,
+                    format=serialization.PublicFormat.SubjectPublicKeyInfo
+                ).decode()
+                
+                st.session_state.temp_private = pem_private
+                st.session_state.temp_public = pem_public
                 increment_usage("RSA_KEYGEN")
-            if 'pub_key' in st.session_state:
-                st.code(st.session_state.pub_key)
-                qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=180x180&data={urllib.parse.quote(st.session_state.pub_key)}"
-                st.image(qr_url, caption="Public Key QR")
+            
+            if 'temp_public' in st.session_state:
+                st.subheader("📤 Your Public Key")
+                st.caption("Hover over the box below and click the icon to copy.")
+                st.code(st.session_state.temp_public, language="text")
+                
+                st.subheader("🗝️ Your Private Key")
+                st.warning("NEVER share this key. If lost, encrypted data is unrecoverable.")
+                st.code(st.session_state.temp_private, language="text")
+                
+                qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=180x180&data={urllib.parse.quote(st.session_state.temp_public)}"
+                st.image(qr_url, caption="Public Key QR (Scan to copy)")
+
+        with t_encrypt:
+            st.subheader("Encrypt for a Recipient")
+            pub_input = st.text_area("Paste the Receiver's Public Key here")
+            secret_msg = st.text_input("Message to lock")
+            
+            if st.button("🔒 Secure Message") and check_usage_limit():
+                try:
+                    recipient_key = serialization.load_pem_public_key(pub_input.encode())
+                    ciphertext = recipient_key.encrypt(
+                        secret_msg.encode(),
+                        padding.OAEP(
+                            mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                            algorithm=hashes.SHA256(),
+                            label=None
+                        )
+                    )
+                    st.success("Message Locked. Copy the ciphertext below and send it.")
+                    st.code(base64.b64encode(ciphertext).decode(), language="text")
+                    increment_usage("RSA_ENC")
+                except Exception as e:
+                    st.error("Invalid Public Key. Please ensure you copied the full key including 'BEGIN PUBLIC KEY'.")
+
+        with t_decrypt:
+            st.subheader("Unlock a Message Sent to You")
+            priv_input = st.text_area("Paste YOUR Private Key here")
+            cipher_input = st.text_area("Paste the Encrypted Ciphertext here")
+            
+            if st.button("🔓 Open Vault"):
+                if check_usage_limit():
+                    try:
+                        my_private_key = serialization.load_pem_private_key(priv_input.encode(), password=None)
+                        raw_cipher = base64.b64decode(cipher_input.strip().encode())
+                        plaintext = my_private_key.decrypt(
+                            raw_cipher,
+                            padding.OAEP(
+                                mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                                algorithm=hashes.SHA256(),
+                                label=None
+                            )
+                        )
+                        st.balloons()
+                        st.success(f"Decrypted Content: {plaintext.decode()}")
+                        increment_usage("RSA_DEC")
+                    except Exception as e:
+                        st.error("Decryption failed. This message was likely encrypted for a different key pair.")
 
     # --- STEGANOGRAPHY MODULE ---
     elif mode == "Steganography":
@@ -236,15 +348,41 @@ else:
         
     # --- ADMIN MODULE ---
     elif mode == "👑 ADMIN":
-        st.header("Admin Terminal")
+        st.header("Admin Command Center")
         try:
-            r = conn.table("users").select("*").execute()
-            df = pd.DataFrame(r.data)
-            st.dataframe(df[['username', 'op_count']], use_container_width=True)
-            u_sel = st.selectbox("Select User", df['username'].tolist())
-            if st.button("Reset Credits"):
-                conn.table("users").update({"op_count": 0}).eq("username", u_sel).execute()
-                st.success(f"Reset {u_sel} successfully.")
-                st.rerun()
-        except: 
-            st.error("Database error.")
+            response = conn.table("users").select("*").execute()
+            df = pd.DataFrame(response.data)
+            
+            if not df.empty:
+                # Calculate Revenue: Each payment count * 200
+                total_revenue = df['payment_count'].sum() * 200
+                
+                col_m1, col_m2, col_m3 = st.columns(3)
+                col_m1.metric("Total Operators", len(df))
+                col_m2.metric("Total Refills Sold", int(df['payment_count'].sum()))
+                col_m3.metric("Total Earnings", f"₦{total_revenue:,}")
+                
+                st.markdown("---")
+                st.subheader("User Payment History")
+                # Show username, current usage, and how many times they've paid
+                st.dataframe(df[['username', 'op_count', 'payment_count']], use_container_width=True)
+                
+                st.markdown("---")
+                target_user = st.selectbox("Select User to Refill", df['username'].tolist())
+                
+                if st.button("💰 VERIFY ₦200 & GRANT +5 OPS"):
+                    # Get current payment count
+                    current_p = df[df['username'] == target_user]['payment_count'].values[0]
+                    # Reset usage to 0 and increase payment count by 1
+                    conn.table("users").update({
+                        "op_count": 0, 
+                        "payment_count": int(current_p + 1)
+                    }).eq("username", target_user).execute()
+                    
+                    st.success(f"Refill Successful! {target_user} now has 5 new credits.")
+                    st.balloons()
+                    st.rerun()
+            else:
+                st.warning("No identities found.")
+        except Exception as e:
+            st.error(f"Sync error: {e}")
