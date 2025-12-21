@@ -185,36 +185,59 @@ else:
             del st.session_state.user
             st.rerun()
 
-    # --- AES MODULE ---
-    if mode == "AES Symmetric":
+    # --- AES MODULE (ENHANCED FILE & VIDEO SUPPORT) ---
+    elif mode == "AES Symmetric":
         st.header("AES-256 Symmetric Locker")
-        master_key = st.text_input("Master Password", type="password")
+        master_key = st.text_input("Master Password", type="password", help="The same key is used to lock and unlock.")
+        
         if master_key:
+            # Generate a 32-byte key from the password
             k = base64.urlsafe_b64encode(hashlib.sha256(master_key.encode()).digest())
             f = Fernet(k)
-            t_text, t_file = st.tabs(["TEXT LOCK", "FILE LOCK"])
             
-            with t_text:
+            tab_text, tab_files = st.tabs(["📝 TEXT LOCK", "🎬 FILE & VIDEO LOCK"])
+            
+            with tab_text:
                 col_e, col_d = st.columns(2)
                 with col_e:
-                    txt = st.text_area("Plaintext")
+                    txt = st.text_area("Plaintext", placeholder="Enter secret message...")
                     if st.button("Encrypt Text") and check_usage_limit():
                         st.code(f.encrypt(txt.encode()).decode())
                         increment_usage("AES_TXT_ENC")
                 with col_d:
-                    ctxt = st.text_area("Ciphertext")
+                    ctxt = st.text_area("Ciphertext", placeholder="Paste encrypted text...")
                     if st.button("Decrypt Text") and check_usage_limit():
                         try:
                             st.success(f.decrypt(ctxt.encode()).decode())
                             increment_usage("AES_TXT_DEC")
-                        except: st.error("Invalid Key")
+                        except: st.error("Invalid Master Password or Data")
 
-            with t_file:
-                up_f = st.file_uploader("Upload File")
-                if up_f and st.button("Protect File") and check_usage_limit():
-                    enc_data = f.encrypt(up_f.read())
-                    st.download_button("Download .vault", enc_data, f"{up_f.name}.vault")
-                    increment_usage("AES_FILE_ENC")
+            with tab_files:
+                st.write("Secure any file type (Videos, Photos, PDFs) using your Master Password.")
+                up_f = st.file_uploader("Upload File/Video", type=['png', 'jpg', 'mp4', 'mkv', 'pdf', 'zip', 'docx'])
+                
+                c1, c2 = st.columns(2)
+                with c1:
+                    if up_f and st.button("🔒 Encrypt & Download") and check_usage_limit():
+                        # Read binary data
+                        file_data = up_f.read()
+                        enc_data = f.encrypt(file_data)
+                        st.download_button(f"Download Encrypted {up_f.name}", enc_data, f"{up_f.name}.aes")
+                        st.success("File locked successfully!")
+                        increment_usage("AES_FILE_ENC")
+                
+                with c2:
+                    st.write("To unlock: Upload a file ending in **.aes**")
+                    down_f = st.file_uploader("Upload .aes file", type=['aes'], key="aes_decrypt")
+                    if down_f and st.button("🔓 Decrypt & Restore") and check_usage_limit():
+                        try:
+                            dec_data = f.decrypt(down_f.read())
+                            # Logic to restore original name if possible, else generic
+                            original_name = down_f.name.replace(".aes", "")
+                            st.download_button(f"Download Decrypted {original_name}", dec_data, original_name)
+                            st.success("File unlocked!")
+                            increment_usage("AES_FILE_DEC")
+                        except: st.error("Decryption failed. Check your Master Password.")
 
     # --- RSA MODULE ---
     elif mode == "RSA Asymmetric":
@@ -325,14 +348,36 @@ else:
     # --- HASHING MODULE ---
     elif mode == "Hashing":
         st.header("Integrity Hashing (SHA-256)")
-        h_file = st.file_uploader("File to Hash")
-        if h_file and st.button("Generate Fingerprint"):
-            if check_usage_limit():
-                res_h = hashlib.sha256(h_file.read()).hexdigest()
-                st.code(res_h)
-                qr_h = f"https://api.qrserver.com/v1/create-qr-code/?size=150x150&data={res_h}"
-                st.image(qr_h)
-                increment_usage("HASH_GEN")
+        st.write("Generate a unique digital fingerprint for any text, image, or video.")
+        
+        h_tab1, h_tab2 = st.tabs(["📄 HASH FILE/VIDEO", "🔡 HASH TEXT"])
+        
+        with h_tab1:
+            h_file = st.file_uploader("Upload File to Fingerprint", type=['png', 'jpg', 'mp4', 'pdf', 'zip', 'exe'])
+            if h_file and st.button("Generate File Hash"):
+                if check_usage_limit():
+                    # Read file in chunks to prevent memory crash for large videos
+                    sha256_hash = hashlib.sha256()
+                    bytes_data = h_file.getvalue()
+                    sha256_hash.update(bytes_data)
+                    res_h = sha256_hash.hexdigest()
+                    
+                    st.subheader("Digital Fingerprint (SHA-256)")
+                    st.code(res_h)
+                    
+                    # Add a verification helper
+                    st.info("If even one pixel in a video changes, this hash will be completely different.")
+                    qr_h = f"https://api.qrserver.com/v1/create-qr-code/?size=150x150&data={res_h}"
+                    st.image(qr_h, caption="QR Code of File Hash")
+                    increment_usage("HASH_FILE")
+        
+        with h_tab2:
+            h_txt = st.text_area("Enter Text to Hash")
+            if h_txt and st.button("Generate Text Hash"):
+                if check_usage_limit():
+                    res_ht = hashlib.sha256(h_txt.encode()).hexdigest()
+                    st.code(res_ht)
+                    increment_usage("HASH_TEXT")
 
     # --- ABOUT MODULE ---
     elif mode == "ℹ️ About":
