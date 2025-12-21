@@ -17,10 +17,14 @@ from style import apply_custom_theme, show_status
 st.set_page_config(page_title="Vanguard Vault | ADELL Tech", layout="wide", page_icon="🛡️")
 apply_custom_theme()
 
-# Secure Connection
-st_url = st.secrets["connections"]["supabase"]["url"]
-st_key = st.secrets["connections"]["supabase"]["key"]
-conn = st.connection("supabase", type=SupabaseConnection, url=st_url, key=st_key)
+# Secure Connection with Error Handling
+try:
+    st_url = st.secrets["connections"]["supabase"]["url"]
+    st_key = st.secrets["connections"]["supabase"]["key"]
+    conn = st.connection("supabase", type=SupabaseConnection, url=st_url, key=st_key)
+except Exception as e:
+    st.error("Database connection failed. Check your Streamlit Secrets.")
+    st.stop()
 
 # --- CONFIGURATION ---
 FREE_LIMIT = 10 
@@ -28,25 +32,31 @@ ADMIN_USERNAME = "ADELL_ADMIN"
 
 # --- UTILITY FUNCTIONS ---
 def get_usage(username):
-    res = conn.table("users").select("op_count").eq("username", username).execute()
-    return res.data[0].get('op_count', 0) if res.data else 0
+    try:
+        res = conn.table("users").select("op_count").eq("username", username).execute()
+        return res.data[0].get('op_count', 0) if res.data else 0
+    except:
+        return 0
 
 def check_usage_limit():
-    if st.session_state.user == ADMIN_USERNAME: return True 
-    count = get_usage(st.session_state.user)
+    if st.session_state.get('user') == ADMIN_USERNAME: return True 
+    count = get_usage(st.session_state.get('user'))
     if count >= FREE_LIMIT:
         st.error(f"🚀 Operation Denied: Free limit reached.")
         return False
     return True
 
 def increment_usage(action_name):
-    if st.session_state.user == ADMIN_USERNAME: return
-    new_count = get_usage(st.session_state.user) + 1
-    conn.table("users").update({"op_count": new_count}).eq("username", st.session_state.user).execute()
+    if st.session_state.get('user') == ADMIN_USERNAME: return
+    current_user = st.session_state.get('user')
+    new_count = get_usage(current_user) + 1
+    conn.table("users").update({"op_count": new_count}).eq("username", current_user).execute()
     add_to_history(action_name, f"Op {new_count}/{FREE_LIMIT}")
 
 def add_to_history(action, detail):
     timestamp = datetime.now().strftime("%H:%M:%S")
+    if 'vault_history' not in st.session_state:
+        st.session_state.vault_history = []
     st.session_state.vault_history.insert(0, f"[{timestamp}] {action}: {detail}")
 
 def check_password_strength(password):
@@ -67,23 +77,27 @@ def encode_image(img, secret_data):
     width, height = img.size
     binary_secret = ''.join(format(ord(i), '08b') for i in secret_data) + '1111111111111110'
     data_index = 0
+    pixels = encoded.load()
     for y in range(height):
         for x in range(width):
-            pixel = list(img.getpixel((x, y)))
-            for n in range(3):
-                if data_index < len(binary_secret):
-                    pixel[n] = pixel[n] & ~1 | int(binary_secret[data_index])
-                    data_index += 1
-            encoded.putpixel((x, y), tuple(pixel))
+            r, g, b = pixels[x, y]
+            if data_index < len(binary_secret):
+                r = r & ~1 | int(binary_secret[data_index]); data_index += 1
+            if data_index < len(binary_secret):
+                g = g & ~1 | int(binary_secret[data_index]); data_index += 1
+            if data_index < len(binary_secret):
+                b = b & ~1 | int(binary_secret[data_index]); data_index += 1
+            pixels[x, y] = (r, g, b)
             if data_index >= len(binary_secret): return encoded
     return encoded
 
 def decode_image(img):
     binary_data = ""
+    pixels = img.load()
     for y in range(img.height):
         for x in range(img.width):
-            pixel = list(img.getpixel((x, y)))
-            for n in range(3): binary_data += str(pixel[n] & 1)
+            r, g, b = pixels[x, y]
+            binary_data += str(r & 1) + str(g & 1) + str(b & 1)
     all_bytes = [binary_data[i:i+8] for i in range(0, len(binary_data), 8)]
     decoded_text = ""
     for byte in all_bytes:
@@ -96,6 +110,7 @@ def decode_image(img):
 if 'logged_in' not in st.session_state: st.session_state.logged_in = False
 if 'vault_history' not in st.session_state: st.session_state.vault_history = []
 if 'dh_private_key' not in st.session_state: st.session_state.dh_private_key = None
+if 'user' not in st.session_state: st.session_state.user = None
 
 # --- AUTHENTICATION ---
 if not st.session_state.logged_in:
@@ -108,7 +123,8 @@ if not st.session_state.logged_in:
             hashed_pw = hashlib.sha256(p.encode()).hexdigest()
             res = conn.table("users").select("*").eq("username", u).eq("password", hashed_pw).execute()
             if len(res.data) > 0:
-                st.session_state.logged_in, st.session_state.user = True, u
+                st.session_state.logged_in = True
+                st.session_state.user = u
                 add_to_history("Login", u)
                 st.rerun()
             else: st.error("Invalid Credentials.")
@@ -140,21 +156,33 @@ else:
         
         if st.button("🔒 LOGOUT"):
             st.session_state.logged_in = False
+            st.session_state.user = None
             st.rerun()
 
     # --- MODE: ABOUT ---
     if mode == "📜 About":
         st.header("🛡️ System Dashboard")
-        st.info("Now supporting full binary encryption for Videos, PDFs, and Media.")
+        st.info("Vanguard Vault: Multi-Layer Cryptographic Suite Active.")
         st.subheader("📋 Recent History")
         for item in st.session_state.vault_history[:10]: st.write(item)
+
+    # --- MODE: ADMIN ---
+    elif mode == "👑 ADMIN":
+        st.header("Admin Control Panel")
+        res = conn.table("users").select("username, op_count").execute()
+        df = pd.DataFrame(res.data)
+        st.table(df)
+        target = st.selectbox("Select User to Reset", df['username'].tolist())
+        if st.button("Reset Operations"):
+            conn.table("users").update({"op_count": 0}).eq("username", target).execute()
+            st.success(f"Reset {target}")
+            st.rerun()
 
     # --- MODE: SYMMETRIC ---
     elif mode == "Symmetric (AES)":
         st.header("AES-256 Multi-Locker")
         
         pwd = st.text_input("Master Password", type="password")
-        
         if pwd:
             key = base64.urlsafe_b64encode(hashlib.sha256(pwd.encode()).digest())
             task = st.radio("Target Type", ["Text", "File/Video"])
@@ -180,7 +208,7 @@ else:
                                 dec = Fernet(key).decrypt(f_bytes)
                                 st.download_button("Download Decrypted", dec, f"RESTORED_{up_f.name.replace('.vault','')}")
                                 increment_usage("AES-DECRYPT")
-                            except: st.error("Incorrect Password.")
+                            except: st.error("Incorrect Password or Corrupted File.")
 
     # --- MODE: RSA ---
     elif mode == "Asymmetric (RSA)":
@@ -203,20 +231,23 @@ else:
             target_f = st.file_uploader("Upload Target (Video/File)")
             action = st.radio("Mode", ["Encrypt (Public Key)", "Decrypt (Private Key)"])
             
-            if key_input and target_f and st.button("Execute"):
+            if key_input and target_f and st.button("Execute RSA"):
                 if action == "Encrypt (Public Key)":
                     pub_obj = serialization.load_pem_public_key(key_input.read())
                     session_key = Fernet.generate_key()
-                    # Encrypt the session key with RSA, and the file with the session key
-                    encrypted_session_key = pub_obj.encrypt(session_key, padding.OAEP(mgf=padding.MGF1(hashes.SHA256()), algorithm=hashes.SHA256(), label=None))
-                    encrypted_data = Fernet(session_key).encrypt(target_f.read())
-                    st.download_button("Download RSA Package", encrypted_session_key + b"||SEP||" + encrypted_data, f"{target_f.name}.rsa")
+                    esk = pub_obj.encrypt(session_key, padding.OAEP(mgf=padding.MGF1(hashes.SHA256()), algorithm=hashes.SHA256(), label=None))
+                    edat = Fernet(session_key).encrypt(target_f.read())
+                    st.download_button("Download RSA Package", esk + b"||SEP||" + edat, f"{target_f.name}.rsa")
+                    increment_usage("RSA-ENC")
                 else:
-                    priv_obj = serialization.load_pem_private_key(key_input.read(), None)
-                    raw = target_f.read()
-                    esk, edat = raw.split(b"||SEP||")
-                    session_key = priv_obj.decrypt(esk, padding.OAEP(mgf=padding.MGF1(hashes.SHA256()), algorithm=hashes.SHA256(), label=None))
-                    st.download_button("Recover Original", Fernet(session_key).decrypt(edat), "RESTORED_FILE")
+                    try:
+                        priv_obj = serialization.load_pem_private_key(key_input.read(), None)
+                        raw = target_f.read()
+                        esk, edat = raw.split(b"||SEP||")
+                        session_key = priv_obj.decrypt(esk, padding.OAEP(mgf=padding.MGF1(hashes.SHA256()), algorithm=hashes.SHA256(), label=None))
+                        st.download_button("Recover Original", Fernet(session_key).decrypt(edat), "RESTORED_FILE")
+                        increment_usage("RSA-DEC")
+                    except: st.error("Decryption Failed. Check your Private Key.")
 
     # --- MODE: DH ---
     elif mode == "Diffie-Hellman":
@@ -228,6 +259,7 @@ else:
                 param = dh.DHParameterNumbers(p=int("FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD129024E088A67CC74020BBEA63B139B22514A08798E3404DDEF9519B3CD3A431B302B0A6DF25F14374FE1356D6D51C245E485B576625E7EC6F44C42E9A637ED6B0BFF5CB6F406B7EDEE386BFB5A899FA5AE9F24117C4B1FE649286651ECE45B3DC2007CB8A163BF0598DA48361C55D39A69163FA8FD24CF5F83655D23DCA3AD961C62F356208552BB9ED529077096966D670C354E4ABC9804F1746C08CA18217C32905E462E36CE3BE39E772C180E86039B2783A2EC07A28FB5C55DF06F4C52C9DE2BCBF6955817183995497CEA956AE515D2261898FA051015728E5A8AACAA68FFFFFFFFFFFFFFFF", 16), g=2)
                 st.session_state.dh_private_key = param.parameters().generate_private_key()
                 st.session_state.dh_pub_pem = st.session_state.dh_private_key.public_key().public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo).decode()
+                increment_usage("DH-GEN")
             if 'dh_pub_pem' in st.session_state: st.code(st.session_state.dh_pub_pem)
         
         with col2:
@@ -243,6 +275,7 @@ else:
             if target_media and st.button("Push through Tunnel"):
                 enc_media = Fernet(st.session_state.dh_aes_key).encrypt(target_media.read())
                 st.download_button("Download Tunneled File", enc_media, f"{target_media.name}.vault")
+                increment_usage("DH-PUSH")
 
     # --- MODE: STEGANOGRAPHY ---
     elif mode == "Steganography":
@@ -256,15 +289,18 @@ else:
                 res = encode_image(Image.open(img_f).convert('RGB'), sec_t)
                 buf = io.BytesIO(); res.save(buf, format="PNG")
                 st.image(res); st.download_button("Download Stealth Image", buf.getvalue(), "stego.png")
+                increment_usage("STEGO-HIDE")
         with s2:
             steg = st.file_uploader("Stego File")
-            if steg and st.button("Reveal"): st.info(decode_image(Image.open(steg).convert('RGB')))
+            if steg and st.button("Reveal"): 
+                st.info(decode_image(Image.open(steg).convert('RGB')))
+                increment_usage("STEGO-REVEAL")
 
     # --- MODE: HASHING ---
     elif mode == "Hashing":
         st.header("Digital Integrity")
         
-        raw_input = st.file_uploader("Upload any file to Hash (Video/Doc/Image)")
+        raw_input = st.file_uploader("Upload any file to Hash")
         if raw_input and st.button("Hash File"):
             h = hashlib.sha256(raw_input.read()).hexdigest()
             st.code(h); st.image(generate_qr(h))
