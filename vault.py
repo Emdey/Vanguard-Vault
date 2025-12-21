@@ -228,14 +228,37 @@ else:
                     increment_usage("RSA_FILE")
 
         with td:
+            st.subheader("Decryption")
             priv_in = st.text_area("Your Private Key")
-            cip_in = st.text_area("Encrypted Key or Message")
-            if st.button("Decrypt"):
-                try:
-                    priv = serialization.load_pem_private_key(priv_in.encode(), None)
-                    res = priv.decrypt(base64.b64decode(cip_in.encode()), padding.OAEP(padding.MGF1(hashes.SHA256()), hashes.SHA256(), None))
-                    st.success(f"Decrypted: {res.decode()}")
-                except: st.error("Decryption Failed")
+            d_type = st.radio("What are you unlocking?", ["Short Message", "Large File/Video"])
+            
+            if d_type == "Short Message":
+                cip_in = st.text_area("Paste Encrypted Text")
+                if st.button("Decrypt Message"):
+                    try:
+                        priv = serialization.load_pem_private_key(priv_in.encode(), None)
+                        res = priv.decrypt(base64.b64decode(cip_in.encode()), padding.OAEP(padding.MGF1(hashes.SHA256()), hashes.SHA256(), None))
+                        st.success(f"Decrypted Message: {res.decode()}")
+                    except: st.error("Decryption Failed. Check Key or Ciphertext.")
+            
+            else:
+                st.info("To unlock a file, you first need the 'Unlock Key' sent by the sender.")
+                cip_key_in = st.text_area("Paste the Encrypted Unlock Key (Text)")
+                up_vault = st.file_uploader("Upload the .vault File")
+                
+                if st.button("Unlock & Download File"):
+                    try:
+                        # 1. Use RSA Private Key to decrypt the AES Session Key
+                        priv = serialization.load_pem_private_key(priv_in.encode(), None)
+                        session_key = priv.decrypt(base64.b64decode(cip_key_in.encode()), padding.OAEP(padding.MGF1(hashes.SHA256()), hashes.SHA256(), None))
+                        
+                        # 2. Use the decrypted Session Key to unlock the File
+                        f_aes = Fernet(session_key)
+                        decrypted_file_data = f_aes.decrypt(up_vault.read())
+                        
+                        st.success("File Unlocked Successfully!")
+                        st.download_button("Download Decrypted File", decrypted_file_data, f"decrypted_{up_vault.name.replace('.vault', '')}")
+                    except: st.error("Failed. Ensure you used the correct Private Key and Unlock Key.")
 
     # --- DIFFIE-HELLMAN MODULE ---
     elif mode == "Diffie-Hellman":
