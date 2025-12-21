@@ -18,11 +18,17 @@ from style import apply_custom_theme, show_status
 st.set_page_config(page_title="Vanguard Vault | ADELL Tech", layout="wide", page_icon="🛡️")
 apply_custom_theme()
 
-# --- DATABASE CONNECTION ---
+# --- DATABASE CONNECTION (REPAIRED) ---
+from supabase import create_client, Client
+
+# These names must match EXACTLY what is in your Streamlit Secrets
 try:
-    conn = st.connection("supabase", type=SupabaseConnection)
+    url = st.secrets["connections"]["supabase"]["url"]
+    key = st.secrets["connections"]["supabase"]["key"]
+    conn = create_client(url, key)
 except Exception as e:
-    st.error("Database connection failed. Please check your secrets.")
+    st.error(f"Connection Failed. Error: {e}")
+    st.info("Check your Secrets: You need [connections.supabase] with 'url' and 'key'")
     st.stop()
 
 # --- CONFIGURATION ---
