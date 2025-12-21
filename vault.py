@@ -3,251 +3,222 @@ from st_supabase_connection import SupabaseConnection
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa, padding, dh
-from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 import base64
 import hashlib
 import io
-import re
 import pandas as pd
 from datetime import datetime
-
-# --- IMPORT CUSTOM THEME ---
-from style import apply_custom_theme
+import urllib.parse
+from style import apply_custom_theme, show_status
 
 # --- SETUP & DATABASE CONNECTION ---
 st.set_page_config(page_title="Vanguard Vault | ADELL Tech", layout="wide", page_icon="🛡️")
 apply_custom_theme()
 
-# Connect to Supabase via secrets.toml
-# Manually load the secrets to avoid the search error
+# Secure connection to your Supabase backend
 st_url = st.secrets["connections"]["supabase"]["url"]
 st_key = st.secrets["connections"]["supabase"]["key"]
+conn = st.connection("supabase", type=SupabaseConnection, url=st_url, key=st_key)
 
-# Connect using the manual keys
-conn = st.connection(
-    "supabase",
-    type=SupabaseConnection,
-    url=st_url,
-    key=st_key
-)
+# --- CONFIGURATION ---
+FREE_LIMIT = 5
+ADMIN_USERNAME = "ADELL_ADMIN" 
+WHATSAPP_NUMBER = "+2347059194126"
 
-# --- HELPER: PASSWORD STRENGTH ---
-def check_password_strength(password):
-    score = 0
-    if len(password) >= 12: score += 1
-    if re.search(r"[A-Z]", password): score += 1
-    if re.search(r"[0-9]", password): score += 1
-    if re.search(r"[!@#$%^&*(),.?\":{}|<>]", password): score += 1
-    return score
+# --- UTILITY FUNCTIONS ---
+def get_usage(username):
+    res = conn.table("users").select("op_count").eq("username", username).execute()
+    return res.data[0].get('op_count', 0) if res.data else 0
 
-# --- AUTH LOGIC ---
-def add_user(username, password):
-    hashed_pw = hashlib.sha256(password.encode()).hexdigest()
-    try:
-        conn.table("users").insert({"username": username, "password": hashed_pw}).execute()
-        return True
-    except Exception:
+def check_usage_limit():
+    if st.session_state.user == ADMIN_USERNAME: return True 
+    count = get_usage(st.session_state.user)
+    if count >= FREE_LIMIT:
+        st.error(f"🚀 Operation Denied: Free limit of {FREE_LIMIT} reached.")
+        st.markdown(f"### 💳 How to Upgrade\n1. Transfer **₦200** to: **YOUR BANK DETAILS**\n2. Send Username **({st.session_state.user})** to Support.")
         return False
+    return True
+
+def increment_usage(action_name):
+    if st.session_state.user == ADMIN_USERNAME: return
+    new_count = get_usage(st.session_state.user) + 1
+    conn.table("users").update({"op_count": new_count}).eq("username", st.session_state.user).execute()
+    add_to_history(action_name, f"Op {new_count}/{FREE_LIMIT}")
 
 def check_user(username, password):
     hashed_pw = hashlib.sha256(password.encode()).hexdigest()
     res = conn.table("users").select("*").eq("username", username).eq("password", hashed_pw).execute()
     return len(res.data) > 0
 
-# --- SESSION STATES ---
+def add_user(username, password):
+    hashed_pw = hashlib.sha256(password.encode()).hexdigest()
+    try:
+        conn.table("users").insert({"username": username, "password": hashed_pw, "op_count": 0}).execute()
+        return True
+    except: return False
+
+def add_to_history(action, detail):
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    st.session_state.vault_history.insert(0, f"[{timestamp}] {action}: {detail}")
+
+# --- INITIALIZE SESSION STATES ---
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
     st.session_state.user = None
 
 states = {
     'private_key_pem': None, 'public_key_pem': None, 
-    'sym_enc_data': None, 'sym_dec_data': None, 
-    'asym_enc_key': None, 'asym_enc_data': None, 'asym_dec_data': None, 
-    'dh_private_key': None, 'dh_public_pem': None, 'dh_shared_key': None,
-    'vault_history': [] 
+    'sym_enc_data': None, 'asym_enc_data': None, 'asym_enc_key': None,
+    'dh_private_key': None, 'dh_public_pem': None, 'vault_history': []
 }
-for key, value in states.items():
-    if key not in st.session_state: st.session_state[key] = value
-
-def add_to_history(action, detail):
-    timestamp = datetime.now().strftime("%H:%M:%S")
-    st.session_state.vault_history.insert(0, f"[{timestamp}] {action}: {detail}")
+for key, val in states.items():
+    if key not in st.session_state: st.session_state[key] = val
 
 # --- APP ROUTING ---
 if not st.session_state.logged_in:
     st.title("🛡️ VANGUARD VAULT")
-    st.caption("Secure Access Portal | **ADELL Tech**")
-    
     t_login, t_signup = st.tabs(["🔑 LOGIN", "👤 REGISTER"])
-    
     with t_login:
-        user = st.text_input("Username")
-        pw = st.text_input("Password", type="password")
+        u = st.text_input("Username")
+        p = st.text_input("Password", type="password")
         if st.button("Access Vault"):
-            if check_user(user, pw):
-                st.session_state.logged_in = True
-                st.session_state.user = user
-                add_to_history("Login", user)
+            if check_user(u, p):
+                st.session_state.logged_in, st.session_state.user = True, u
+                add_to_history("Login", u)
                 st.rerun()
-            else:
-                st.error("Invalid Credentials.")
-
+            else: st.error("Invalid Credentials.")
     with t_signup:
-        new_user = st.text_input("New Username")
-        new_pw = st.text_input("New Password", type="password")
-        strength = 0
-        if new_pw:
-            strength = check_password_strength(new_pw)
-            remarks = ["Very Weak 🛑", "Weak ⚠️", "Fair 🆗", "Strong ✅", "Pro 🏆"]
-            st.progress(strength / 4)
-            st.caption(f"Security Level: **{remarks[strength]}**")
-        
-        if st.button("Register with ADELL"):
-            if strength < 3:
-                st.warning("Password must be 'Strong' or higher to meet ADELL protocols.")
-            elif add_user(new_user, new_pw):
-                st.success("Cloud ID Created. Please switch to Login tab.")
-            else:
-                st.error("Account creation failed (User may already exist).")
-
+        nu = st.text_input("New Username")
+        np = st.text_input("New Password", type="password")
+        if st.button("Register Account"):
+            if add_user(nu, np): st.success("Created! Please Login.")
+            else: st.error("Username taken.")
 else:
-    # --- AUTHENTICATED VAULT APP ---
     with st.sidebar:
-        st.markdown("<h2 style='color: #00d4ff;'>ADELL</h2>", unsafe_allow_html=True)
-        st.write(f"Active Session: **{st.session_state.user}**")
-        mode = st.selectbox("SYSTEM SELECTION", [
-            "Symmetric (AES-256)", 
-            "Asymmetric (RSA)", 
-            "Diffie-Hellman Exchange", 
-            "Hashing & Integrity"
-        ])
-        if st.button("🔒 SECURE LOGOUT"):
+        show_status()
+        st.markdown("<h2 style='color: #00d4ff;'>ADELL TECH</h2>", unsafe_allow_html=True)
+        ops_done = get_usage(st.session_state.user)
+        
+        # Upgrade Animation
+        if ops_done == 0 and st.session_state.vault_history and "Login" not in st.session_state.vault_history[0]:
+            st.balloons()
+            st.success("✅ Account Upgraded!")
+            
+        st.progress(min(ops_done / FREE_LIMIT, 1.0))
+        st.caption(f"Usage: {ops_done} / {FREE_LIMIT}")
+        
+        msg = urllib.parse.quote(f"Upgrade request for: {st.session_state.user}")
+        st.link_button("💬 Chat with Support", f"https://wa.me/{+2347059194126}?text={msg}")
+        
+        menu_options = ["Symmetric (AES-256)", "Asymmetric (RSA)", "Diffie-Hellman Exchange", "Hashing & Integrity", "📜 About Vanguard"]
+        if st.session_state.user == ADMIN_USERNAME: menu_options.insert(0, "👑 ADMIN DASHBOARD")
+        mode = st.selectbox("SYSTEM SELECTION", menu_options)
+        
+        if st.button("🔒 LOGOUT"):
             st.session_state.logged_in = False
             st.rerun()
+
+    # --- 0. ADMIN DASHBOARD ---
+    if mode == "👑 ADMIN DASHBOARD":
+        st.title("👑 Admin Control Center")
+        users_data = conn.table("users").select("username, op_count").execute()
+        df = pd.DataFrame(users_data.data)
+        st.table(df)
+        u_to_fix = st.selectbox("Select User to Reset", df['username'].tolist())
+        if st.button("Reset Operations (Upgrade User)"):
+            conn.table("users").update({"op_count": 0}).eq("username", u_to_fix).execute()
+            st.success(f"User {u_to_fix} has been reset!")
+            st.rerun()
+
+    # --- 1. AES-256 SYMMETRIC ---
+    elif mode == "Symmetric (AES-256)":
+        st.header("AES-256 Text & File Encryption")
+        pwd = st.text_input("Master Password", type="password", help="This password creates the encryption key.")
+        msg_to_enc = st.text_area("Message to Encrypt", placeholder="Type your secret message here...")
         
-        st.subheader("📜 SESSION LOGS")
-        for log in st.session_state.vault_history[:8]:
-            st.caption(log)
-
-    st.title(f"Vanguard Mode: {mode}")
-
-    # --- 1. SYMMETRIC (AES-256) ---
-    if mode == "Symmetric (AES-256)":
-        st.info("Encrypt messages or files with a master password using ADELL standards.")
-        col1, col2 = st.columns(2)
-        with col1:
-            st.subheader("🔒 Encrypt")
-            pwd = st.text_input("Set Master Password", type="password", key="aes_pwd")
-            in_type = st.radio("Input Type", ["Message", "File"])
-            to_lock = None
-            if in_type == "Message":
-                m = st.text_area("Your Message")
-                if m: to_lock = m.encode()
-            else:
-                f = st.file_uploader("Upload File")
-                if f: to_lock = f.read()
-            
-            if st.button("Encrypt Data"):
-                if pwd and to_lock:
-                    key = base64.urlsafe_b64encode(hashlib.sha256(pwd.encode()).digest())
-                    st.session_state.sym_enc_data = Fernet(key).encrypt(to_lock)
-                    add_to_history("AES-ENC", in_type)
-                    st.success("Encryption complete.")
-            
-            if st.session_state.sym_enc_data:
-                st.download_button("📥 Download .enc", st.session_state.sym_enc_data, "secure_vault.enc")
-
-        with col2:
-            st.subheader("🔓 Decrypt")
-            dec_pwd = st.text_input("Unlock Password", type="password")
-            dec_f = st.file_uploader("Upload .enc file")
-            if st.button("Unlock File"):
-                try:
-                    key = base64.urlsafe_b64encode(hashlib.sha256(dec_pwd.encode()).digest())
-                    st.session_state.sym_dec_data = Fernet(key).decrypt(dec_f.read())
-                    add_to_history("AES-DEC", "Data restored")
-                    st.success("File Decrypted!")
-                except: st.error("Verification failed. Incorrect password.")
-            
-            if st.session_state.sym_dec_data:
-                st.download_button("💾 Download Restored File", st.session_state.sym_dec_data, "restored_item")
+        if st.button("Encrypt Message") and check_usage_limit():
+            if pwd and msg_to_enc:
+                # Deriving a key from the password
+                key = base64.urlsafe_b64encode(hashlib.sha256(pwd.encode()).digest())
+                st.session_state.sym_enc_data = Fernet(key).encrypt(msg_to_enc.encode())
+                increment_usage("AES-MSG")
+                st.success("Message Secured!")
+                st.code(st.session_state.sym_enc_data.decode(), language="text")
 
     # --- 2. ASYMMETRIC (RSA) ---
     elif mode == "Asymmetric (RSA)":
-        st.info("Generate keys and handle secure identity verification.")
-        t1, t2, t3 = st.tabs(["🔑 Key Generation", "🔒 RSA Encryption", "✍️ Digital Signatures"])
+        st.header("RSA-2048 Asymmetric Messaging")
+        t1, t2 = st.tabs(["🔑 Key Management", "🔒 Secure Messaging"])
         
         with t1:
-            size = st.select_slider("Strength", options=[2048, 4096], value=2048)
-            if st.button("Generate RSA Pair"):
-                priv = rsa.generate_private_key(65537, size)
+            st.write("Generate a public/private key pair.")
+            if st.button("Generate RSA Pair") and check_usage_limit():
+                priv = rsa.generate_private_key(65537, 2048)
                 st.session_state.private_key_pem = priv.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
                 st.session_state.public_key_pem = priv.public_key().public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo)
-                add_to_history("RSA-KEY", f"{size}bit")
+                increment_usage("RSA-KEY")
+            
             if st.session_state.private_key_pem:
-                st.download_button("💾 Download Private Key", st.session_state.private_key_pem, "private.pem")
-                st.download_button("💾 Download Public Key", st.session_state.public_key_pem, "public.pem")
-
+                st.download_button("📥 Download My Private Key", st.session_state.private_key_pem, "private.pem")
+                st.download_button("📥 Download My Public Key", st.session_state.public_key_pem, "public.pem")
+        
         with t2:
-            pub_key_file = st.file_uploader("Receiver's Public Key")
-            data_file = st.file_uploader("File to Encrypt")
-            if pub_key_file and data_file and st.button("RSA Encrypt"):
-                pub_obj = serialization.load_pem_public_key(pub_key_file.read())
-                # Hybrid encryption: Encrypt data with AES, then encrypt AES key with RSA
+            st.write("Encrypt a message using a Receiver's Public Key.")
+            pub_key_input = st.file_uploader("Upload Receiver's Public Key (.pem)")
+            secret_msg = st.text_area("Secret Message")
+            
+            if pub_key_input and secret_msg and st.button("RSA Encrypt Message") and check_usage_limit():
+                pub_obj = serialization.load_pem_public_key(pub_key_input.read())
+                # Hybrid Encryption: Use AES for data, RSA for the key
                 aes_key = Fernet.generate_key()
-                st.session_state.asym_enc_data = Fernet(aes_key).encrypt(data_file.read())
+                st.session_state.asym_enc_data = Fernet(aes_key).encrypt(secret_msg.encode())
                 st.session_state.asym_enc_key = pub_obj.encrypt(aes_key, padding.OAEP(mgf=padding.MGF1(hashes.SHA256()), algorithm=hashes.SHA256(), label=None))
-                st.success("Encrypted. Download both files to send.")
+                increment_usage("RSA-ENC")
+                st.success("Message Encrypted for Receiver.")
+            
             if st.session_state.asym_enc_data:
-                st.download_button("📥 Data (.enc)", st.session_state.asym_enc_data, "data.enc")
-                st.download_button("🔑 Encrypted Key", st.session_state.asym_enc_key, "key.enc")
-
-        with t3:
-            st.write("**Sign a File to Prove Identity**")
-            sign_priv = st.file_uploader("Your Private Key")
-            file_to_sign = st.file_uploader("File to Sign")
-            if sign_priv and file_to_sign and st.button("Sign Now"):
-                priv_obj = serialization.load_pem_private_key(sign_priv.read(), None)
-                signature = priv_obj.sign(file_to_sign.read(), padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH), hashes.SHA256())
-                st.download_button("📥 Download Signature (.sig)", signature, f"{file_to_sign.name}.sig")
+                st.subheader("Encrypted Output")
+                st.code(base64.b64encode(st.session_state.asym_enc_data).decode())
+                st.download_button("📥 Download Encrypted Package", st.session_state.asym_enc_data, "rsa_msg.enc")
 
     # --- 3. DIFFIE-HELLMAN ---
     elif mode == "Diffie-Hellman Exchange":
-        st.info("Establish a shared secret key with another party over insecure lines.")
-        col_a, col_b = st.columns(2)
-        with col_a:
-            if st.button("Generate DH Session Keys"):
-                pn = dh.DHParameterNumbers(p=int("FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD129024E088A67CC74020BBEA63B139B22514A08798E3404DDEF9519B3CD3A431B302B0A6DF25F14374FE1356D6D51C245E485B576625E7EC6F44C42E9A637ED6B0BFF5CB6F406B7EDEE386BFB5A899FA5AE9F24117C4B1FE649286651ECE45B3DC2007CB8A163BF0598DA48361C55D39A69163FA8FD24CF5F83655D23DCA3AD961C62F356208552BB9ED529077096966D670C354E4ABC9804F1746C08CA18217C32905E462E36CE3BE39E772C180E86039B2783A2EC07A28FB5C55DF06F4C52C9DE2BCBF6955817183995497CEA956AE515D2261898FA051015728E5A8AACAA68FFFFFFFFFFFFFFFF", 16), g=2)
-                priv = pn.parameters().generate_private_key()
-                st.session_state.dh_private_key = priv
-                st.session_state.dh_public_pem = priv.public_key().public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo)
-            if st.session_state.dh_public_pem:
-                st.download_button("💾 Download My DH Public Key", st.session_state.dh_public_pem, "my_dh_pub.pem")
+        st.header("Diffie-Hellman Key Exchange")
+        st.write("Exchange public components to agree on a shared secret without ever sending the secret itself.")
+        
+        if st.button("Generate DH Public Component") and check_usage_limit():
+            # Standard DH Parameters (Group 14)
+            pn = dh.DHParameterNumbers(p=int("FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD129024E088A67CC74020BBEA63B139B22514A08798E3404DDEF9519B3CD3A431B302B0A6DF25F14374FE1356D6D51C245E485B576625E7EC6F44C42E9A637ED6B0BFF5CB6F406B7EDEE386BFB5A899FA5AE9F24117C4B1FE649286651ECE45B3DC2007CB8A163BF0598DA48361C55D39A69163FA8FD24CF5F83655D23DCA3AD961C62F356208552BB9ED529077096966D670C354E4ABC9804F1746C08CA18217C32905E462E36CE3BE39E772C180E86039B2783A2EC07A28FB5C55DF06F4C52C9DE2BCBF6955817183995497CEA956AE515D2261898FA051015728E5A8AACAA68FFFFFFFFFFFFFFFF", 16), g=2)
+            priv = pn.parameters().generate_private_key()
+            st.session_state.dh_public_pem = priv.public_key().public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo)
+            increment_usage("DH-KEY")
+        
+        if st.session_state.dh_public_pem:
+            st.info("Send this public key to your partner.")
+            st.code(st.session_state.dh_public_pem.decode())
+            st.download_button("💾 Download DH Public Key", st.session_state.dh_public_pem, "dh_pub.pem")
 
-        with col_b:
-            p_file = st.file_uploader("Upload Partner's DH Key")
-            if p_file and st.session_state.dh_private_key:
-                if st.button("Establish Shared Secret"):
-                    p_pub = serialization.load_pem_public_key(p_file.read())
-                    raw_secret = st.session_state.dh_private_key.exchange(p_pub)
-                    derived = HKDF(hashes.SHA256(), 32, None, b'handshake').derive(raw_secret)
-                    st.session_state.dh_shared_key = base64.urlsafe_b64encode(derived).decode()
-                    st.success("Handshake Successful. Secure Tunnel Established.")
-                    st.code(f"Shared Session Key: {st.session_state.dh_shared_key}")
+    # --- 4. HASHING ---
+    elif mode == "Hashing & Integrity":
+        st.header("SHA-256 Hashing")
+        st.write("Generate a non-reversible digital fingerprint of your text.")
+        h_input = st.text_area("Enter Text to Hash")
+        
+        if h_input and st.button("Generate Hash") and check_usage_limit():
+            result = hashlib.sha256(h_input.encode()).hexdigest()
+            st.subheader("SHA-256 Fingerprint")
+            st.code(result, language="text")
+            increment_usage("HASH")
 
-    # --- 4. HASHING & INTEGRITY ---
-    else:
-        st.info("Verify file integrity using ADELL verification protocols.")
-        algo = st.selectbox("Algorithm", ["SHA-256", "SHA-512", "MD5"])
-        bulk_files = st.file_uploader("Upload Files for Verification", accept_multiple_files=True)
-        if bulk_files and st.button("Generate Integrity Report"):
-            report = []
-            for bf in bulk_files:
-                content = bf.read()
-                if algo == "SHA-256": h = hashlib.sha256(content).hexdigest()
-                elif algo == "SHA-512": h = hashlib.sha512(content).hexdigest()
-                else: h = hashlib.md5(content).hexdigest()
-                report.append({"Filename": bf.name, "Hash": h, "Status": "Verified"})
-            df = pd.DataFrame(report)
-            st.table(df)
-            st.download_button("📥 Download Report (CSV)", df.to_csv(index=False), "integrity_report.csv")
+    # --- 5. ABOUT ---
+    elif mode == "📜 About Vanguard":
+        st.title("🛡️ Vanguard Vault")
+        st.markdown("""
+        ### Developed by ADELL Tech
+        This suite provides high-grade security tools for personal and professional use.
+        
+        * **AES-256:** The gold standard for symmetric encryption.
+        * **RSA-2048:** Secure communication for people who haven't met.
+        * **Diffie-Hellman:** Safe key exchange over insecure channels.
+        * **SHA-256:** Ensuring your data hasn't been tampered with.
+        """)
