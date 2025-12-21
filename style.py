@@ -3,6 +3,7 @@ import streamlit as st
 def apply_custom_theme():
     """
     Applies the Vanguard Vault signature Deep Cyan & Neon Glow theme.
+    Updated to support Payment Alerts and Cryptographic Tabs.
     """
     st.markdown("""
         <style>
@@ -54,26 +55,39 @@ def apply_custom_theme():
             border-radius: 4px;
         }
 
-        /* Progress Bar */
+        /* Progress Bar - Cyan Gradient */
         .stProgress > div > div > div > div {
             background-image: linear-gradient(to right, #004d4d, #00f2ff);
         }
 
-        /* Tabs Styling */
+        /* Tabs Styling - Vital for the Encrypt/Decrypt split */
         .stTabs [data-baseweb="tab"] {
             color: #80ced6;
+            background-color: transparent;
         }
 
         .stTabs [aria-selected="true"] {
             color: #00f2ff !important;
             border-bottom-color: #00f2ff !important;
+            font-weight: bold;
         }
 
-        /* Success Messages */
+        /* Success and Info Messages */
         .stAlert {
             background-color: #001215;
             border: 1px solid #00ffaa;
             color: #00ffaa;
+        }
+
+        /* Custom scrollbar for that 'Terminal' look */
+        ::-webkit-scrollbar {
+            width: 5px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #00080a;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #00f2ff33;
         }
         </style>
     """, unsafe_allow_html=True)
@@ -83,7 +97,7 @@ def show_status():
     Displays the 'SYSTEM ONLINE' pulse indicator with Cyan Glow.
     """
     st.sidebar.markdown("""
-        <div style="display: flex; align-items: center; padding: 12px; border: 1px solid #00f2ff22; border-radius: 4px; background: #000c0e;">
+        <div style="display: flex; align-items: center; padding: 12px; border: 1px solid #00f2ff22; border-radius: 4px; background: #000c0e; margin-bottom: 10px;">
             <div style="
                 width: 10px; 
                 height: 10px; 
