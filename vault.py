@@ -12,7 +12,8 @@ from datetime import datetime
 from PIL import Image
 from supabase import create_client, Client
 import stepic
-
+import style
+st.markdown(style.get_custom_css(), unsafe_allow_html=True)
 # --- CUSTOM STYLING MODULE ---
 st.markdown("---")
 try:
@@ -38,16 +39,28 @@ except Exception as e:
     st.error("Database Connection Offline.")
     st.stop()
 
-# --- CONFIGURATION ---
+# --- CONFIGURATION  ---
 FREE_LIMIT = 5
 ADMIN_USERNAME = "ADELL_ADMIN"
 WHATSAPP_NUMBER = "2347059194126" 
 BANK_INFO = "BANK: Opay | ACCT: 7059194126 | NAME: ADELL TECH"
-if FLUTTERWAVE_LINK == "#":
-    st.button("💳 GATEWAY COMING SOON", disabled=True)
-else:
-    st.markdown(f'<a href="{FLUTTERWAVE_LINK}" target="_blank"><button style="...">PAY VIA GATEWAY</button></a>', unsafe_allow_html=True)
 
+# 1. DEFINE the variable first
+FLUTTERWAVE_LINK = "#" 
+
+# 2. NOW you can use it in logic
+def show_payment_button():
+    if FLUTTERWAVE_LINK == "#":
+        st.button("💳 GATEWAY COMING SOON", disabled=True)
+        st.caption("Please use the Bank Transfer details above.")
+    else:
+        st.markdown(f'''
+            <a href="{FLUTTERWAVE_LINK}" target="_blank">
+                <button style="background:#fbba00; color:black; border:none; padding:12px; width:100%; border-radius:5px; font-weight:bold; cursor:pointer;">
+                    💳 PAY VIA FLUTTERWAVE
+                </button>
+            </a>
+        ''', unsafe_allow_html=True)
 # --- SYSTEM UTILITIES ---
 def add_log(username, action):
     try:
@@ -65,35 +78,30 @@ def check_usage_limit():
     count = get_usage(st.session_state.get('user'))
     
     if count >= FREE_LIMIT:
-        # Determine if we should enable the Flutterwave button
-        is_live = FLUTTERWAVE_LINK != "#" and FLUTTERWAVE_LINK is not None
-        
+        # Determine if gateway is active
+        is_live = FLUTTERWAVE_LINK != "#"
+        gate_class = "flutterwave-btn" if is_live else "flutterwave-btn btn-disabled"
+        gate_text = "💳 PAY VIA CARD" if is_live else "💳 GATEWAY SOON"
+
         st.markdown(f"""
-            <div style="background: #001215; padding: 20px; border: 2px solid #00f2ff; border-radius: 8px; margin-bottom: 20px;">
-                <h3 style="color: #00f2ff !important; margin-top:0;">🛡️ VAULT RECHARGE REQUIRED</h3>
-                <p style="color: #e0faff;">Your free operations are exhausted. Choose a payment method to get <b>5 more credits (₦200)</b>.</p>
+            <div style="background: #001215; padding: 20px; border: 2px solid #00f2ff; border-radius: 8px;">
+                <h3 style="color: #00f2ff; margin-top:0;">🛡️ RECHARGE REQUIRED</h3>
+                <p style="color: #e0faff;">Limit reached. Pay <b>₦200</b> for 5 credits.</p>
                 
                 <div style="display: flex; gap: 10px; margin-bottom: 15px;">
-                    <div style="flex: 1; border: 1px solid #fbba00; padding: 10px; border-radius: 5px; text-align: center;">
-                        <p style="font-size: 0.8rem; color: #fbba00; font-weight: bold; margin-bottom: 8px;">WEB GATEWAY</p>
-                        <a href="{FLUTTERWAVE_LINK if is_live else '#'}" target="_blank" style="text-decoration: none;">
-                            <button class="flutterwave-btn" {"" if is_live else "disabled style='background:#444; color:#888; cursor:not-allowed;'"}>
-                                { "PAY VIA CARD" if is_live else "GATEWAY SOON" }
-                            </button>
+                    <div style="flex: 1; text-align: center;">
+                        <a href="{FLUTTERWAVE_LINK}" target="_blank" class="{gate_class}">
+                            {gate_text}
                         </a>
                     </div>
-                    
-                    <div style="flex: 1; border: 1px solid #00f2ff; padding: 10px; border-radius: 5px; text-align: center;">
-                        <p style="font-size: 0.8rem; color: #00f2ff; font-weight: bold; margin-bottom: 8px;">BANK TRANSFER</p>
-                        <code style="font-size: 0.75rem; color: #00f2ff;">{BANK_INFO}</code>
+                    <div style="flex: 1; border: 1px solid #00f2ff; border-radius: 5px; text-align: center; padding: 5px;">
+                        <p style="font-size: 0.7rem; color: #00f2ff; margin:0;">BANK TRANSFER</p>
+                        <code style="font-size: 0.75rem;">{BANK_INFO}</code>
                     </div>
                 </div>
 
-                <p style="font-size: 0.8rem; color: #80ced6; text-align: center; margin-bottom: 10px;">After payment, send proof for instant refill:</p>
-                <a href="https://wa.me/{WHATSAPP_NUMBER}?text=Payment%20Proof%20for%20Vault%20User:%20{st.session_state.user}" target="_blank" style="text-decoration: none;">
-                    <button style="background:#25D366; color:white; border:none; padding:12px; width:100%; border-radius:5px; font-weight:bold; cursor:pointer;">
-                        ⚡ SEND PROOF ON WHATSAPP
-                    </button>
+                <a href="https://wa.me/{WHATSAPP_NUMBER}?text=Proof:%20{st.session_state.user}" class="whatsapp-btn">
+                    ⚡ SEND PROOF ON WHATSAPP
                 </a>
             </div>
         """, unsafe_allow_html=True)
@@ -233,7 +241,7 @@ if refills > 0:
     st.download_button("📄 DOWNLOAD RECEIPT", receipt, f"Receipt_{st.session_state.user}.txt")
     
 # 5. Navigation Menu
-menu = ["AES Symmetric", "RSA Hybrid", "Steganography", "Hashing", "Diffie-Hellman", "ℹ️ About"]
+menu = ["AES Symmetric", "RSA Hybrid", "Diffie-Hellman", "Hashing", "Steganography", "📡 Support", "ℹ️ About"]
 if st.session_state.user == ADMIN_USERNAME: 
     menu.insert(0, "👑 ADMIN")
 mode = st.selectbox("Select Module", menu)
@@ -413,6 +421,7 @@ if st.button("Terminate Session"):
                     st.error("Message body cannot be empty.")
 
     # --- ABOUT MODULE ---
+
     elif mode == "ℹ️ About":
         st.header("🛡️ VANGUARD VAULT | SYSTEM OVERVIEW")
         st.success("✅ **Zero-Knowledge Architecture:** ADELL Tech does not store your Passkey. Your security is mathematically guaranteed.")
@@ -420,32 +429,30 @@ if st.button("Terminate Session"):
         # --- THE CRITICAL SECURITY NOTE ---
         st.warning("""
         ⚠️ **CRITICAL NOTE ON DECRYPTION:** While your Recovery Code can reset your **Account Access**, it CANNOT recover files encrypted with a lost Master Password. 
-        In true Zero-Knowledge systems, if you lose the specific password used to lock a file, that data is mathematically lost forever. 
+        In true Zero-Knowledge systems, if you lose the password used to lock a file, that data is lost forever. 
         **Vanguard Vault staff cannot 'backdoor' your files.**
         """)
 
         col1, col2 = st.columns([2, 1])
         with col1:
             st.markdown(f"""
-### **1. Identity & Data Recovery**
-* **Account Recovery:** Use your 12-character code to reset your login passkey if forgotten.
-* **Data Locking:** We log action types (e.g., 'AES_ENC') for billing, but we never see your files.
+### **1. Two-Way Cryptography**
+* **Encryption:** Every tool here (AES, RSA, DH, Stego) is reversible. If you lock it, you can unlock it using the correct key.
+* **Hashing:** This is the only 'one-way' tool, used to verify if a file has been tampered with.
 
 ### **2. RSA Hybrid & Diffie-Hellman**
 * **RSA:** Securely send files by locking them with a recipient's **Public Key**.
 * **DH Exchange:** Establish a shared secret key with a partner in real-time without revealing private data.
 
-
-### **3. Hashing & Steganography**
-* **Hashing:** Generate 'fingerprints' to verify if a file has been tampered with.
-* **Stego:** We hide data in pixels. **Tip:** Always send Stego images as a **'Document'** on WhatsApp to prevent compression.
-
+### **3. Steganography**
+* **How it works:** We hide data in image pixels. 
+* **Important:** Always send Stego images as a **'Document'** on WhatsApp to prevent quality compression from breaking the code.
 
 ### **4. How to Transfer Secure Files**
-1. **Encrypt** your file/text inside the Vault.
-2. **Download** the resulting `.vanguard` or `.vault` file to your device.
-3. **Send** that file to your partner via any chat app.
-4. Your partner **Uploads** that file into their Vault and enters the key to Decrypt.
+1. **Encrypt** your data/file inside the Vault.
+2. **Download** the resulting file to your device.
+3. **Send** that file to your partner via any chat app (WhatsApp, Telegram, Email).
+4. Your partner **Uploads** that file into their Vault to Decrypt.
             """)
         with col2:
             st.info(f"**Developer:** ADELL Tech\n\n**BANK INFO:**\n{BANK_INFO}")

@@ -58,6 +58,9 @@ def apply_custom_theme():
             font-weight: bold !important;
             cursor: pointer !important;
             transition: 0.3s;
+            text-decoration: none !important;
+            display: block !important;
+            text-align: center !important;
         }
         
         .flutterwave-btn:hover {
@@ -65,10 +68,26 @@ def apply_custom_theme():
             transform: translateY(-2px);
         }
 
-        .flutterwave-btn:disabled {
-            background-color: #444 !important;
-            color: #888 !important;
+        .btn-disabled {
+            background-color: #222 !important;
+            color: #666 !important;
+            border: 1px solid #333 !important;
             cursor: not-allowed !important;
+            pointer-events: none !important;
+        }
+
+        .whatsapp-btn {
+            background-color: #25D366 !important;
+            color: white !important;
+            border: none !important;
+            padding: 12px !important;
+            width: 100% !important;
+            border-radius: 5px !important;
+            font-weight: bold !important;
+            text-decoration: none !important;
+            display: block !important;
+            text-align: center !important;
+            margin-top: 10px !important;
         }
 
         /* Input Fields - Darkened Cyan */
