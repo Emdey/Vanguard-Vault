@@ -39,17 +39,18 @@ st.set_page_config(
 # Supabase Initialization
 # ==============================
 
-# --- 2. DATABASE CONNECTION ---
+# --- SETUP & DATABASE CONNECTION ---
+st.set_page_config(page_title="Vanguard Vault | ADELL Tech", layout="wide", page_icon="🛡️")
+apply_custom_theme()
+
+# Secure Connection with Error Handling
 try:
-    # This looks for secrets in .streamlit/secrets.toml (Local) 
-    # or the "Secrets" tab on Streamlit Cloud (Online)
-    SUPABASE_URL = st.secrets["https://dgjilrsxupascbuasibr.supabase.co"]
-    SUPABASE_KEY = st.secrets["sb_publishable_HmInolc_gXap9xldk9pmlg_KHrPbMtI"]
-    conn: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    st_url = st.secrets["connections"]["supabase"]["https://dgjilrsxupascbuasibr.supabase.co"]
+    st_key = st.secrets["connections"]["supabase"]["eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRnamlscnN4dXBhc2NidWFzaWJyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjYyNzEzMjgsImV4cCI6MjA4MTg0NzMyOH0.LbfnIylVbK2NcnrmZ-3SSK0yej-qmLHxLKj6425a7Jo"]
+    conn = st.connection("supabase", type=SupabaseConnection, url=st_url, key=st_key)
 except Exception as e:
-    st.error("❌ Supabase configuration missing or invalid.")
-    st.info("Ensure SUPABASE_URL and SUPABASE_KEY are set in Streamlit Secrets.")
-    st.stop() # Stops the app here so it doesn't crash later
+    st.error("Database connection failed. Check your Streamlit Secrets.")
+    st.stop()
 # ============================================================
 # GLOBAL CONFIG
 # ============================================================
