@@ -35,8 +35,30 @@ st.set_page_config(
 # ENV / CONFIG
 # ============================================================
 
-SUPABASE_URL = os.getenv("https://dgjilrsxupascbuasibr.supabase.co")
-SUPABASE_KEY = os.getenv("sb_publishable_HmInolc_gXap9xldk9pmlg_KHrPbMtI")
+# ============================================================
+# SUPABASE INITIALIZATION (DEPLOYMENT SAFE)
+# ============================================================
+
+SUPABASE_URL = os.environ.get("https://dgjilrsxupascbuasibr.supabase.co")
+SUPABASE_KEY = os.environ.get("sb_publishable_HmInolc_gXap9xldk9pmlg_KHrPbMtI")
+
+if not SUPABASE_URL or not SUPABASE_KEY:
+    st.error(
+        "❌ Supabase configuration missing.\n\n"
+        "Ensure SUPABASE_URL and SUPABASE_KEY are set in Streamlit Secrets."
+    )
+    st.stop()
+
+try:
+    conn: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+except Exception as e:
+    st.error("❌ Failed to connect to database.")
+    st.exception(e)
+    st.stop()
+
+# ============================================================
+# GLOBAL CONFIG
+# ============================================================
 
 ADMIN_USERNAME = "ADELL_ADMIN"
 FREE_LIMIT = 5
@@ -45,8 +67,6 @@ SESSION_TIMEOUT_MIN = 30
 BANK_INFO = "BANK: Opay | ACCT: 7059194126 | NAME: ADELL TECH"
 WHATSAPP_NUMBER = "2347059194126"
 FLUTTERWAVE_LINK = "#"  # Replace when live
-
-conn: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # ============================================================
 # SESSION ISOLATION & TIMEOUT
