@@ -43,14 +43,21 @@ st.set_page_config(
 st.set_page_config(page_title="Vanguard Vault | ADELL Tech", layout="wide", page_icon="🛡️")
 apply_custom_theme()
 
-# Secure Connection with Error Handling
-try:
-    st_url = st.secrets["connections"]["supabase"]["https://dgjilrsxupascbuasibr.supabase.co"]
-    st_key = st.secrets["connections"]["supabase"]["eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRnamlscnN4dXBhc2NidWFzaWJyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjYyNzEzMjgsImV4cCI6MjA4MTg0NzMyOH0.LbfnIylVbK2NcnrmZ-3SSK0yej-qmLHxLKj6425a7Jo"]
-    conn = st.connection("supabase", type=SupabaseConnection, url=st_url, key=st_key)
-except Exception as e:
-    st.error("Database connection failed. Check your Streamlit Secrets.")
+# --- Secure Supabase Connection with Error Handling ---
+SUPABASE_URL = st.secrets.get("https://dgjilrsxupascbuasibr.supabase.co")
+SUPABASE_KEY = st.secrets.get("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRnamlscnN4dXBhc2NidWFzaWJyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjYyNzEzMjgsImV4cCI6MjA4MTg0NzMyOH0.LbfnIylVbK2NcnrmZ-3SSK0yej-qmLHxLKj6425a7Jo")
+
+if not SUPABASE_URL or not SUPABASE_KEY:
+    st.error("❌ Supabase configuration missing. Ensure SUPABASE_URL and SUPABASE_KEY are set in Streamlit Secrets.")
     st.stop()
+
+try:
+    from supabase import create_client, Client
+    conn: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+except Exception as e:
+    st.error(f"Database connection failed: {e}")
+    st.stop()
+
 # ============================================================
 # GLOBAL CONFIG
 # ============================================================
