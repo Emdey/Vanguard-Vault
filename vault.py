@@ -35,25 +35,24 @@ st.set_page_config(
 # ENV / CONFIG
 # ============================================================
 
-# ============================================================
-# SUPABASE INITIALIZATION (DEPLOYMENT SAFE)
-# ============================================================
+# ==============================
+# Supabase Initialization
+# ==============================
 
-SUPABASE_URL = os.environ.get("https://dgjilrsxupascbuasibr.supabase.co")
-SUPABASE_KEY = os.environ.get("sb_publishable_HmInolc_gXap9xldk9pmlg_KHrPbMtI")
+# Try fetching from Streamlit Secrets first (recommended for Cloud)
+SUPABASE_URL = st.secrets.get("https://dgjilrsxupascbuasibr.supabase.co") or os.environ.get("https://dgjilrsxupascbuasibr.supabase.co")
+SUPABASE_KEY = st.secrets.get("sb_publishable_HmInolc_gXap9xldk9pmlg_KHrPbMtI") or os.environ.get("sb_publishable_HmInolc_gXap9xldk9pmlg_KHrPbMtI")
 
 if not SUPABASE_URL or not SUPABASE_KEY:
-    st.error(
-        "❌ Supabase configuration missing.\n\n"
-        "Ensure SUPABASE_URL and SUPABASE_KEY are set in Streamlit Secrets."
-    )
+    st.error("❌ Supabase configuration missing.\n"
+             "Ensure SUPABASE_URL and SUPABASE_KEY are set in Streamlit Secrets or environment variables.")
     st.stop()
 
+# Initialize client safely
 try:
     conn: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 except Exception as e:
-    st.error("❌ Failed to connect to database.")
-    st.exception(e)
+    st.error(f"❌ Failed to connect to Supabase: {e}")
     st.stop()
 
 # ============================================================
