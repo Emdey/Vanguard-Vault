@@ -36,28 +36,25 @@ st.set_page_config(
 # ENV / CONFIG
 # ============================================================
 
+
 # ==============================
 # Supabase Initialization
 # ==============================
 
 # --- SETUP & DATABASE CONNECTION ---
-st.set_page_config(page_title="Vanguard Vault | ADELL Tech", layout="wide", page_icon="🛡️")
-apply_custom_theme()
-
-# --- Secure Supabase Connection with Error Handling ---
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
 
 if not SUPABASE_URL or not SUPABASE_KEY:
-    st.error("❌ Supabase configuration missing. Ensure SUPABASE_URL and SUPABASE_KEY are set in Streamlit Secrets.")
+    st.error("❌ Supabase configuration missing. Check Streamlit secrets.")
     st.stop()
 
 try:
-    from supabase import create_client, Client
     conn: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 except Exception as e:
     st.error(f"Database connection failed: {e}")
     st.stop()
+
 
 # ============================================================
 # GLOBAL CONFIG
