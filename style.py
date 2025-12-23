@@ -3,7 +3,7 @@ import streamlit as st
 def apply_custom_theme():
     """
     Applies the Vanguard Vault signature Deep Cyan & Neon Glow theme.
-    Updated to support Payment Alerts and Cryptographic Tabs.
+    This includes your full layout and specialized payment styling.
     """
     st.markdown("""
         <style>
@@ -47,6 +47,30 @@ def apply_custom_theme():
             box-shadow: 0 0 12px #00f2ff;
         }
 
+        /* --- SPECIALIZED PAYMENT BUTTONS --- */
+        .flutterwave-btn {
+            background-color: #fbba00 !important;
+            color: black !important;
+            border: none !important;
+            padding: 12px !important;
+            width: 100% !important;
+            border-radius: 5px !important;
+            font-weight: bold !important;
+            cursor: pointer !important;
+            transition: 0.3s;
+        }
+        
+        .flutterwave-btn:hover {
+            box-shadow: 0 0 20px #fbba00;
+            transform: translateY(-2px);
+        }
+
+        .flutterwave-btn:disabled {
+            background-color: #444 !important;
+            color: #888 !important;
+            cursor: not-allowed !important;
+        }
+
         /* Input Fields - Darkened Cyan */
         .stTextInput>div>div>input, .stTextArea>div>div>textarea {
             background-color: #001215 !important;
@@ -60,7 +84,7 @@ def apply_custom_theme():
             background-image: linear-gradient(to right, #004d4d, #00f2ff);
         }
 
-        /* Tabs Styling - Vital for the Encrypt/Decrypt split */
+        /* Tabs Styling */
         .stTabs [data-baseweb="tab"] {
             color: #80ced6;
             background-color: transparent;
@@ -72,23 +96,10 @@ def apply_custom_theme():
             font-weight: bold;
         }
 
-        /* Success and Info Messages */
-        .stAlert {
-            background-color: #001215;
-            border: 1px solid #00ffaa;
-            color: #00ffaa;
-        }
-
-        /* Custom scrollbar for that 'Terminal' look */
-        ::-webkit-scrollbar {
-            width: 5px;
-        }
-        ::-webkit-scrollbar-track {
-            background: #00080a;
-        }
-        ::-webkit-scrollbar-thumb {
-            background: #00f2ff33;
-        }
+        /* Custom scrollbar */
+        ::-webkit-scrollbar { width: 5px; }
+        ::-webkit-scrollbar-track { background: #00080a; }
+        ::-webkit-scrollbar-thumb { background: #00f2ff33; }
         </style>
     """, unsafe_allow_html=True)
 
