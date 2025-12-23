@@ -39,22 +39,17 @@ st.set_page_config(
 # Supabase Initialization
 # ==============================
 
-# Try fetching from Streamlit Secrets first (recommended for Cloud)
-SUPABASE_URL = st.secrets.get("https://dgjilrsxupascbuasibr.supabase.co") or os.environ.get("https://dgjilrsxupascbuasibr.supabase.co")
-SUPABASE_KEY = st.secrets.get("sb_publishable_HmInolc_gXap9xldk9pmlg_KHrPbMtI") or os.environ.get("sb_publishable_HmInolc_gXap9xldk9pmlg_KHrPbMtI")
-
-if not SUPABASE_URL or not SUPABASE_KEY:
-    st.error("❌ Supabase configuration missing.\n"
-             "Ensure SUPABASE_URL and SUPABASE_KEY are set in Streamlit Secrets or environment variables.")
-    st.stop()
-
-# Initialize client safely
+# --- 2. DATABASE CONNECTION ---
 try:
+    # This looks for secrets in .streamlit/secrets.toml (Local) 
+    # or the "Secrets" tab on Streamlit Cloud (Online)
+    SUPABASE_URL = st.secrets["https://dgjilrsxupascbuasibr.supabase.co"]
+    SUPABASE_KEY = st.secrets["sb_publishable_HmInolc_gXap9xldk9pmlg_KHrPbMtI"]
     conn: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 except Exception as e:
-    st.error(f"❌ Failed to connect to Supabase: {e}")
-    st.stop()
-
+    st.error("❌ Supabase configuration missing or invalid.")
+    st.info("Ensure SUPABASE_URL and SUPABASE_KEY are set in Streamlit Secrets.")
+    st.stop() # Stops the app here so it doesn't crash later
 # ============================================================
 # GLOBAL CONFIG
 # ============================================================
