@@ -17,6 +17,7 @@ from supabase import create_client, Client
 import stepic
 
 from style import apply_custom_theme, show_status
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 apply_custom_theme()
 show_status()
@@ -44,8 +45,8 @@ st.set_page_config(page_title="Vanguard Vault | ADELL Tech", layout="wide", page
 apply_custom_theme()
 
 # --- Secure Supabase Connection with Error Handling ---
-SUPABASE_URL = st.secrets.get("https://dgjilrsxupascbuasibr.supabase.co")
-SUPABASE_KEY = st.secrets.get("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRnamlscnN4dXBhc2NidWFzaWJyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjYyNzEzMjgsImV4cCI6MjA4MTg0NzMyOH0.LbfnIylVbK2NcnrmZ-3SSK0yej-qmLHxLKj6425a7Jo")
+SUPABASE_URL = st.secrets["SUPABASE_URL"]
+SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
 
 if not SUPABASE_URL or not SUPABASE_KEY:
     st.error("❌ Supabase configuration missing. Ensure SUPABASE_URL and SUPABASE_KEY are set in Streamlit Secrets.")
@@ -153,6 +154,14 @@ def increment_usage(user, label):
 
 st.markdown(f"<div class='support-card'>🔒 CREDIT LIMIT REACHED<br>Pay <b>₦200</b> to unlock 5 more operations.<br><code>{BANK_INFO}</code><br><a href='https://wa.me/{WHATSAPP_NUMBER}?text=Proof:{user}' target='_blank'>📩 Send Proof on WhatsApp</a></div>", unsafe_allow_html=True)
 
+def check_usage_limit(user):
+    if user == ADMIN_USERNAME:
+        return True
+    usage = get_usage(user)
+    if usage >= FREE_LIMIT:
+        st.error("Operation Denied: Credit Limit Reached.")
+        return False
+    return True
 
 # ============================================================
 # AUTH UI (LOGIN / REGISTER / RECOVERY)
