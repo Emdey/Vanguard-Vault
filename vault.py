@@ -421,8 +421,13 @@ elif mode == "RSA Hybrid":
                 format=serialization.PrivateFormat.PKCS8,
                 encryption_algorithm=serialization.BestAvailableEncryption(master_key.encode())
             ).decode()
-            st.write("📤 **Public Key (Share This)**"); st.code(pem_pub)
-            st.write("🔑 **Private Key (KEEP SECRET)**"); st.code(pem_priv)
+            
+            st.write("📤 **Public Key (Share This)**")
+            st.text_area("Public Key", pem_pub, height=150)
+            
+            st.write("🔑 **Private Key (KEEP SECRET)**")
+            st.text_area("Private Key", pem_priv, height=200)
+            
             increment_usage(user, f"RSA_KEYGEN_{k_size}")
 
     # ---------------- Hybrid Encryption ----------------
@@ -443,7 +448,9 @@ elif mode == "RSA Hybrid":
                     )
                 )
                 st.success("Vault Created!")
-                st.code(base64.b64encode(enc_s_key).decode(), label="Recipient Unlock Key")
+                
+                st.text_area("Recipient Unlock Key", base64.b64encode(enc_s_key).decode(), height=150)
+                
                 st.download_button("Download .vault", enc_file, f"{file_upload.name}.vault")
                 increment_usage(user, "RSA_HYBRID_ENC")
             except Exception as e:
@@ -475,6 +482,7 @@ elif mode == "RSA Hybrid":
                 )
             except Exception as e:
                 st.error(f"Decryption Failed: {e}")
+
 
 
 
