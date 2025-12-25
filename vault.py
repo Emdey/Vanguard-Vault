@@ -82,6 +82,8 @@ def init_session():
         st.session_state.auth = {"user": None, "login_time": None}
     if "crypto" not in st.session_state:
         st.session_state.crypto = {}
+    if "master_key" not in st.session_state:
+        st.session_state.master_key = None
 
 def enforce_session_timeout():
     if st.session_state.auth["login_time"]:
@@ -142,31 +144,51 @@ def audit(user, action):
 # USAGE, BILLING & PAYWALL
 # ============================================================
 
-def get_usage(user):
-    res = conn.table("users").select("op_count").eq("username", user).execute()
-    return res.data[0]["op_count"] if res.data else 0
+def get_usage(user: str) -> int:
+    """Fetch the number of operations a user has performed."""
+    try:
+        res = conn.table("users").select("op_count").eq("username", user).execute()
+        if res.data and len(res.data) > 0:
+            return int(res.data[0].get("op_count", 0))
+        return 0
+    except Exception as e:
+        st.error(f"Error fetching usage for {user}: {e}")
+        return 0
 
 
-def increment_usage(user, label):
+def increment_usage(user: str, action: str) -> None:
+    """Increment user's operation count and log the action."""
     if user == ADMIN_USERNAME:
-        return
-    conn.table("users").update({
-        "op_count": get_usage(user) + 1
-    }).eq("username", user).execute()
-    audit(user, label)
+        return  # Admin is unlimited
+    try:
+        curr = get_usage(user)
+        conn.table("users").update({"op_count": curr + 1}).eq("username", user).execute()
+        audit(user, action)
+    except Exception as e:
+        st.error(f"Error incrementing usage for {user}: {e}")
 
 
-def check_usage_limit(user):
+def check_usage_limit(user: str) -> bool:
+    """
+    Returns True if the user is allowed to perform another operation.
+    If limit is reached, displays a paywall message.
+    """
     if user == ADMIN_USERNAME:
         return True
 
     usage = get_usage(user)
 
     if usage >= FREE_LIMIT:
+        # Safely render paywall
         st.markdown(
             f"""
-            <div class='support-card'>
-                🔒 CREDIT LIMIT REACHED<br>
+            <div style="
+                padding: 16px; 
+                background: #ffe6e6; 
+                border-radius: 8px; 
+                border: 1px solid #ff4d4f;
+            ">
+                🔒 <b>CREDIT LIMIT REACHED</b><br>
                 Pay <b>₦200</b> to unlock 5 more operations.<br>
                 <code>{BANK_INFO}</code><br>
                 <a href="https://wa.me/{WHATSAPP_NUMBER}?text=Proof:{user}" target="_blank">
@@ -179,6 +201,7 @@ def check_usage_limit(user):
         return False
 
     return True
+
 
 # ============================================================
 # AUTH UI (LOGIN / REGISTER / RECOVERY)
@@ -280,20 +303,21 @@ mode = st.selectbox("Module", menu)
 # ============================================================
 if mode == "AES Symmetric":
     st.header("🛡️ AES-256 Symmetric Locker")
-    
-    master_key = st.text_input(
-        "Master Password (Key)", 
+
+    # --- Capture Master Key in session ---
+    st.session_state.master_key = st.text_input(
+        "Master Password (Key)",
         type="password",
         help="This password is used to derive a strong 256-bit encryption key."
     )
-    
+    master_key = st.session_state.master_key
+
     if master_key:
         # ---------------- Strong Key Derivation ----------------
-        # PBKDF2 with SHA-256, random salt, 200,000 iterations
         if "aes_salt" not in st.session_state:
             st.session_state.aes_salt = os.urandom(16)
         salt = st.session_state.aes_salt
-        
+
         kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),
             length=32,
@@ -302,20 +326,20 @@ if mode == "AES Symmetric":
         )
         key = base64.urlsafe_b64encode(kdf.derive(master_key.encode()))
         fernet = Fernet(key)
-        
+
         # ---------------- Tabs for Text and File ----------------
         tab_text, tab_file = st.tabs(["📝 Text Locker", "🎬 File/Video Vault"])
-        
+
         # ---------------- Text Locker ----------------
         with tab_text:
             col1, col2 = st.columns(2)
-            
+
             with col1:
                 plaintext = st.text_area("Plaintext to Encrypt")
                 if st.button("🔒 Encrypt Text") and plaintext and check_usage_limit(user):
                     st.code(fernet.encrypt(plaintext.encode()).decode())
                     increment_usage(user, "AES_TEXT_ENC")
-            
+
             with col2:
                 ciphertext = st.text_area("Ciphertext to Decrypt")
                 if st.button("🔓 Decrypt Text") and ciphertext:
@@ -335,6 +359,7 @@ if mode == "AES Symmetric":
                     f"{file_upload.name}.vanguard"
                 )
                 increment_usage(user, "AES_FILE_ENC")
+
             vault_upload = st.file_uploader("Upload .vanguard Vault for Decryption", type=['vanguard'])
             if vault_upload and st.button("🔓 Decrypt Vault"):
                 try:
@@ -349,18 +374,22 @@ if mode == "AES Symmetric":
 elif mode == "RSA Hybrid":
     st.header("🔑 RSA Hybrid Suite (Secure & Future-Proof)")
 
+    # Ensure master_key is available
+    master_key = st.session_state.master_key
+    if not master_key:
+        st.warning("Enter your Master Key in AES module first.")
+        st.stop()
+
     tab_key, tab_encrypt, tab_decrypt = st.tabs(["🔑 KEYGEN", "🔒 ENCRYPT", "🔓 DECRYPT"])
-    
+
     # ---------------- Key Generation ----------------
     with tab_key:
         k_size = st.select_slider("Bit Strength", options=[2048, 4096], value=2048)
         if st.button("Generate RSA Keypair") and check_usage_limit(user):
-            # Use recommended public exponent
             priv = rsa.generate_private_key(
                 public_exponent=65537,
                 key_size=k_size
             )
-            # PEM format
             pem_pub = priv.public_key().public_bytes(
                 encoding=serialization.Encoding.PEM,
                 format=serialization.PublicFormat.SubjectPublicKeyInfo
@@ -368,7 +397,7 @@ elif mode == "RSA Hybrid":
             pem_priv = priv.private_bytes(
                 encoding=serialization.Encoding.PEM,
                 format=serialization.PrivateFormat.PKCS8,
-                encryption_algorithm=serialization.BestAvailableEncryption(master_key.encode()) if master_key else serialization.NoEncryption()
+                encryption_algorithm=serialization.BestAvailableEncryption(master_key.encode())
             ).decode()
             st.write("📤 **Public Key (Share This)**"); st.code(pem_pub)
             st.write("🔑 **Private Key (KEEP SECRET)**"); st.code(pem_priv)
@@ -380,11 +409,9 @@ elif mode == "RSA Hybrid":
         file_upload = st.file_uploader("Select File")
         if file_upload and pub_key and st.button("Execute Hybrid Lock") and check_usage_limit(user):
             try:
-                # AES symmetric session key
                 s_key = Fernet.generate_key()
                 enc_file = Fernet(s_key).encrypt(file_upload.read())
                 pub = serialization.load_pem_public_key(pub_key.encode())
-                # Encrypt session key with recipient public key using OAEP
                 enc_s_key = pub.encrypt(
                     s_key,
                     padding.OAEP(
@@ -407,7 +434,10 @@ elif mode == "RSA Hybrid":
         vault_file = st.file_uploader("Upload .vault")
         if st.button("🔓 Decrypt & Extract") and vault_file:
             try:
-                priv = serialization.load_pem_private_key(priv_key.encode(), password=master_key.encode() if master_key else None)
+                priv = serialization.load_pem_private_key(
+                    priv_key.encode(),
+                    password=master_key.encode()
+                )
                 s_key = priv.decrypt(
                     base64.b64decode(enc_key.encode()),
                     padding.OAEP(
@@ -416,7 +446,11 @@ elif mode == "RSA Hybrid":
                         label=None
                     )
                 )
-                st.download_button("Download Decrypted File", Fernet(s_key).decrypt(vault_file.read()), "unlocked_file")
+                st.download_button(
+                    "Download Decrypted File",
+                    Fernet(s_key).decrypt(vault_file.read()),
+                    "unlocked_file"
+                )
             except Exception as e:
                 st.error(f"Decryption Failed: {e}")
 
@@ -521,20 +555,21 @@ elif mode == "Hashing":
 # ============================================================
 elif mode == "Steganography":
     st.header("🖼️ Steganographic Covert Ops")
-    
+
     tab_hide, tab_extract = st.tabs(["🔒 Hide Message", "🔓 Extract Message"])
-    
+
     with tab_hide:
         img_up = st.file_uploader("Cover Image (PNG)", type=['png'])
         secret_msg = st.text_area("Secret Message")
-        password = st.text_input("Encryption Password (Key)", type="password",
-                                 help="This password is used to encrypt the message before hiding it.")
-        
+        st.session_state.master_key = st.text_input(
+            "Encryption Password (Key)",
+            type="password",
+            help="This password is used to encrypt the message before hiding it."
+        )
+        password = st.session_state.master_key
+
         if img_up and secret_msg and password and st.button("Encode & Download") and check_usage_limit(user):
-            # Generate a random salt
             salt = os.urandom(16)
-            
-            # Key derivation with PBKDF2HMAC
             kdf = PBKDF2HMAC(
                 algorithm=hashes.SHA256(),
                 length=32,
@@ -543,31 +578,20 @@ elif mode == "Steganography":
             )
             key = base64.urlsafe_b64encode(kdf.derive(password.encode()))
             fernet = Fernet(key)
-            
-            # Encrypt the message
             encrypted_msg = fernet.encrypt(secret_msg.encode())
-            
-            # Prepend salt to encrypted message for decryption
             payload = salt + encrypted_msg
-            
-            # Encode in image
             buf = io.BytesIO()
             stepic.encode(Image.open(img_up), payload).save(buf, format="PNG")
             st.download_button("Download Secret PNG", buf.getvalue(), "secret.png")
             increment_usage(user, "STEGO_HIDE")
-    
+
     with tab_extract:
         img_enc = st.file_uploader("Upload Secret Image", type=['png'], key="stego_up")
         password = st.text_input("Decryption Password (Key)", type="password", key="stego_pass")
-        
         if img_enc and password and st.button("Extract & Decrypt"):
             try:
                 hidden_data = stepic.decode(Image.open(img_enc))
-                
-                # Extract salt (first 16 bytes) and ciphertext
                 salt, encrypted_msg = hidden_data[:16], hidden_data[16:]
-                
-                # Key derivation using extracted salt
                 kdf = PBKDF2HMAC(
                     algorithm=hashes.SHA256(),
                     length=32,
@@ -576,7 +600,6 @@ elif mode == "Steganography":
                 )
                 key = base64.urlsafe_b64encode(kdf.derive(password.encode()))
                 fernet = Fernet(key)
-                
                 decrypted_msg = fernet.decrypt(encrypted_msg)
                 st.success(f"Hidden Message: {decrypted_msg.decode()}")
             except Exception as e:
