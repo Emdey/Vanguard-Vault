@@ -212,11 +212,12 @@ if not st.session_state.auth["user"]:
 
     t1, t2 = st.tabs(["Login", "Register"])
 
+    # ---------------------- LOGIN TAB ----------------------
     with t1:
-        u = st.text_input("Username")
-        p = st.text_input("Password", type="password")
+        u = st.text_input("Username", key="login_user")
+        p = st.text_input("Password", type="password", key="login_pass")
 
-        if st.button("Access Vault"):
+        if st.button("Access Vault", key="btn_login"):
             if not rate_limit(u, "LOGIN"):
                 st.error("Too many attempts. Try later.")
                 st.stop()
@@ -231,11 +232,12 @@ if not st.session_state.auth["user"]:
             else:
                 st.error("Access Denied")
 
+        # ------------------- RECOVERY EXPANDER -------------------
         with st.expander("🔑 Forgot Passkey?"):
-            ru = st.text_input("Username", key="ru")
-            rc = st.text_input("Recovery Code")
-            np = st.text_input("New Passkey", type="password")
-            if st.button("Reset Passkey"):
+            ru = st.text_input("Username", key="recov_user")
+            rc = st.text_input("Recovery Code", key="recov_code")
+            np = st.text_input("New Passkey", type="password", key="recov_pass")
+            if st.button("Reset Passkey", key="btn_reset"):
                 res = conn.table("users").select("*").eq("username", ru).eq("recovery_code", rc).execute()
                 if res.data:
                     conn.table("users").update({
@@ -246,30 +248,33 @@ if not st.session_state.auth["user"]:
                 else:
                     st.error("Invalid recovery details.")
 
+    # ---------------------- REGISTER TAB ----------------------
     with t2:
-        nu = st.text_input("New Username")
-        np = st.text_input("New Passkey", type="password")
-        agree = st.checkbox("I accept the Terms of Service")
+        nu = st.text_input("New Username", key="reg_user")
+        np_reg = st.text_input("New Passkey", type="password", key="reg_pass")
+        agree = st.checkbox("I accept the Terms of Service", key="reg_agree")
 
-        if st.button("Create Identity") and agree:
-            rc = "".join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(12))
+        if st.button("Create Identity", key="btn_register") and agree:
+            rc_new = "".join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(12))
             conn.table("users").insert({
                 "username": nu,
-                "password": hashlib.sha256(np.encode()).hexdigest(),
-                "recovery_code": rc,
+                "password": hashlib.sha256(np_reg.encode()).hexdigest(),
+                "recovery_code": rc_new,
                 "op_count": 0,
                 "payment_count": 0
             }).execute()
             st.success("Account created.")
             st.warning("SAVE THIS RECOVERY CODE")
-            st.code(rc)
+            st.code(rc_new)
             st.download_button(
                 "Download Recovery Key",
-                f"USER:{nu}\nRECOVERY:{rc}",
-                f"Recovery_{nu}.txt"
+                f"USER:{nu}\nRECOVERY:{rc_new}",
+                f"Recovery_{nu}.txt",
+                key=f"dl_rc_{nu}"
             )
 
     st.stop()
+
 
 # ============================================================
 # MAIN APPLICATION
