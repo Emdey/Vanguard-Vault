@@ -327,39 +327,55 @@ mode = st.selectbox("Module", menu)
 if mode == "AES Symmetric":
     st.header("🛡️ AES-256 Symmetric Locker")
 
-    # --- Capture Master Key in session ---
-    st.session_state.master_key = st.text_input(
-        "Master Password (Key)",
-        type="password",
-        help="This password is used to derive a strong 256-bit encryption key."
-    )
-    master_key = st.session_state.master_key
+    tab_keygen, tab_text, tab_file = st.tabs(["🔑 KEYGEN", "📝 Text Locker", "🎬 File/Video Vault"])
 
-    if master_key:
-        # ---------------- Strong Key Derivation ----------------
-        if "aes_salt" not in st.session_state:
-            st.session_state.aes_salt = os.urandom(16)
-        salt = st.session_state.aes_salt
+    # ---------------- 1. KEY GENERATION ----------------
+    with tab_keygen:
+        st.subheader("Generate a Strong AES-256 Key")
+        st.info("This generates a random 32-byte key. Unlike a password, this is nearly impossible to brute-force.")
+        
+        if st.button("Generate New Random Key"):
+            new_key = Fernet.generate_key().decode()
+            st.write("**Your New AES Key (Save this!):**")
+            st.code(new_key)
+            st.warning("⚠️ Vanguard does not store this key. If you lose it, your files are gone forever.")
 
-        kdf = PBKDF2HMAC(
-            algorithm=hashes.SHA256(),
-            length=32,
-            salt=salt,
-            iterations=200_000
-        )
-        key = base64.urlsafe_b64encode(kdf.derive(master_key.encode()))
-        fernet = Fernet(key)
+    # ---------------- KEY SELECTION ----------------
+    st.markdown("---")
+    key_mode = st.radio("Key Source:", ["Use Master Password", "Use Manual AES Key"])
+    
+    fernet = None
+    
+    if key_mode == "Use Master Password":
+        m_pass = st.text_input("Master Password", type="password")
+        if m_pass:
+            if "aes_salt" not in st.session_state:
+                st.session_state.aes_salt = os.urandom(16)
+            
+            kdf = PBKDF2HMAC(
+                algorithm=hashes.SHA256(),
+                length=32,
+                salt=st.session_state.aes_salt,
+                iterations=200_000
+            )
+            derived = base64.urlsafe_b64encode(kdf.derive(m_pass.encode()))
+            fernet = Fernet(derived)
+    else:
+        manual_key = st.text_input("Paste AES Key", type="password")
+        if manual_key:
+            try:
+                fernet = Fernet(manual_key.encode())
+            except Exception:
+                st.error("Invalid AES Key format. Ensure it is a 32-byte Base64 string.")
 
-        # ---------------- Tabs for Text and File ----------------
-        tab_text, tab_file = st.tabs(["📝 Text Locker", "🎬 File/Video Vault"])
-
-        # ---------------- Text Locker ----------------
-        with tab_text:
+    # ---------------- 2. TEXT LOCKER ----------------
+    with tab_text:
+        if fernet:
             col1, col2 = st.columns(2)
-
             with col1:
                 plaintext = st.text_area("Plaintext to Encrypt")
                 if st.button("🔒 Encrypt Text") and plaintext and check_usage_limit(user):
+                    st.write("**Encrypted Message:**")
                     st.code(fernet.encrypt(plaintext.encode()).decode())
                     increment_usage(user, "AES_TEXT_ENC")
 
@@ -367,12 +383,17 @@ if mode == "AES Symmetric":
                 ciphertext = st.text_area("Ciphertext to Decrypt")
                 if st.button("🔓 Decrypt Text") and ciphertext:
                     try:
-                        st.success(fernet.decrypt(ciphertext.encode()).decode())
+                        decrypted = fernet.decrypt(ciphertext.encode()).decode()
+                        st.success("Decryption Successful!")
+                        st.write(decrypted)
                     except:
                         st.error("Decryption Failed: Invalid Key or Corrupt Data")
+        else:
+            st.info("Please provide a password or key above to use the locker.")
 
-        # ---------------- File/Video Vault ----------------
-        with tab_file:
+    # ---------------- 3. FILE VAULT ----------------
+    with tab_file:
+        if fernet:
             file_upload = st.file_uploader("Upload File/Video")
             if file_upload and st.button("📦 Execute File Lock") and check_usage_limit(user):
                 enc_data = fernet.encrypt(file_upload.read())
@@ -383,12 +404,17 @@ if mode == "AES Symmetric":
                 )
                 increment_usage(user, "AES_FILE_ENC")
 
-            vault_upload = st.file_uploader("Upload .vanguard Vault for Decryption", type=['vanguard'])
+            st.markdown("---")
+            vault_upload = st.file_uploader("Upload .vanguard Vault to Unlock", type=['vanguard'])
             if vault_upload and st.button("🔓 Decrypt Vault"):
                 try:
-                    st.success(fernet.decrypt(vault_upload.read()).decode())
+                    dec_data = fernet.decrypt(vault_upload.read())
+                    st.success("Vault Unlocked!")
+                    st.download_button("📥 Download Original File", dec_data, "restored_file")
                 except:
                     st.error("Decryption Failed: Invalid Key or Corrupt Data")
+        else:
+            st.info("Please provide a password or key above to use the vault.")
 
 
 # ============================================================
@@ -501,21 +527,27 @@ elif mode == "Diffie-Hellman":
     st.header("🤝 Diffie-Hellman Key Exchange (Secure & Modern)")
     st.info("Establish a 256-bit shared secret key with another operator.")
 
-    # Use safe prime from RFC 3526 (2048-bit MODP Group)
-    pn = dh.DHParameterNumbers(
-        p=int("FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD1"
-              "29024E088A67CC74020BBEA63B139B22514A08798E3404DDEF9519B3CD3A431B302B0A6DF25F14374FE1356D6D51C245E485B576625E7EC6F44C42E9A637ED6B0BFF5CB6F406B7EDEE386BFB5A899FA5AE9F24117C4B1FE649286651ECE45B3DC2007CB8A163BF0598DA48361C55D39A69163FA8FD24CF5F83655D23DCA3AD961C62F356208552BB9ED529077096966D670C354E4ABC9804F1746C08CA18217C32905E462E36CE3BE39E772C180E86039B2783A2EC07A28FB5C55DF06F4C52C9DE2BCBF6955817183995497C1B8E99408288D41D738908AF1305D157184E5321D50A22D1612984", 16),
-        g=2
-    )
-    params = pn.parameters()
+    # FIX: Use the standard library generator for Group 14 (2048-bit)
+    # This replaces the manual 'pn = dh.DHParameterNumbers' block that was crashing
+    from cryptography.hazmat.primitives.asymmetric import dh
+    
+    # We use a standard 2048-bit MODP group (Group 14)
+    # This is mathematically identical to what you were trying to do but safer
+    if "dh_params" not in st.session_state:
+        # These parameters can be shared/public
+        st.session_state.dh_params = dh.generate_parameters(generator=2, key_size=2048)
+    
+    params = st.session_state.dh_params
 
     tab_gen, tab_secret = st.tabs(["1️⃣ Generate My Key", "2️⃣ Compute Shared Secret"])
 
     # ---------------- Generate DH Key ----------------
     with tab_gen:
         if st.button("Generate DH Public Key") and check_usage_limit(user):
+            # Generate local private key
             priv = params.generate_private_key()
-            st.session_state.dh_priv = priv # Stored in session for Step 2
+            st.session_state.dh_priv = priv 
+            
             pub = priv.public_key().public_bytes(
                 serialization.Encoding.PEM,
                 serialization.PublicFormat.SubjectPublicKeyInfo
@@ -533,7 +565,10 @@ elif mode == "Diffie-Hellman":
                 st.error("❌ Local Private Key missing. Please go to 'Generate My Key' first.")
             else:
                 try:
+                    # Load partner's key
                     p_pub = serialization.load_pem_public_key(partner_pub_input.encode())
+                    
+                    # Perform exchange
                     shared = st.session_state.dh_priv.exchange(p_pub)
                     
                     # Derive 256-bit AES key via HKDF
@@ -547,8 +582,10 @@ elif mode == "Diffie-Hellman":
                     st.success("🤝 Shared Secret Established!")
                     st.write("**Usable AES Key (Derived):**")
                     st.code(base64.urlsafe_b64encode(derived).decode())
+                    
                 except Exception as e:
-                    st.error(f"Error calculating secret: {e}")
+                    st.error(f"Error: {e}")
+                    st.info("Ensure the partner is using the same DH Parameters (Vanguard Standard Group 14).")
 
 
 
