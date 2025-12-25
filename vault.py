@@ -49,7 +49,7 @@ try:
     conn: Client = create_client(S_URL, S_KEY)
 
     # Hard connection test
-    conn.table("users").select("id").limit(1).execute()
+    conn.table("users").select("*").limit(1).execute()
 
     st.sidebar.success("📡 Database Linked")
 
