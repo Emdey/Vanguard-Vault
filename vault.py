@@ -22,6 +22,8 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 apply_custom_theme()
 show_status()
 
+
+
 # ============================================================
 # PAGE CONFIG & BRANDING
 # ============================================================
@@ -144,6 +146,7 @@ def get_usage(user):
     res = conn.table("users").select("op_count").eq("username", user).execute()
     return res.data[0]["op_count"] if res.data else 0
 
+
 def increment_usage(user, label):
     if user == ADMIN_USERNAME:
         return
@@ -152,15 +155,29 @@ def increment_usage(user, label):
     }).eq("username", user).execute()
     audit(user, label)
 
-st.markdown(f"<div class='support-card'>🔒 CREDIT LIMIT REACHED<br>Pay <b>₦200</b> to unlock 5 more operations.<br><code>{BANK_INFO}</code><br><a href='https://wa.me/{WHATSAPP_NUMBER}?text=Proof:{user}' target='_blank'>📩 Send Proof on WhatsApp</a></div>", unsafe_allow_html=True)
 
 def check_usage_limit(user):
     if user == ADMIN_USERNAME:
         return True
+
     usage = get_usage(user)
+
     if usage >= FREE_LIMIT:
-        st.error("Operation Denied: Credit Limit Reached.")
+        st.markdown(
+            f"""
+            <div class='support-card'>
+                🔒 CREDIT LIMIT REACHED<br>
+                Pay <b>₦200</b> to unlock 5 more operations.<br>
+                <code>{BANK_INFO}</code><br>
+                <a href="https://wa.me/{WHATSAPP_NUMBER}?text=Proof:{user}" target="_blank">
+                    📩 Send Proof on WhatsApp
+                </a>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
         return False
+
     return True
 
 # ============================================================
