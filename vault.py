@@ -212,68 +212,85 @@ if not st.session_state.auth["user"]:
 
     t1, t2 = st.tabs(["Login", "Register"])
 
-    # ---------------------- LOGIN TAB ----------------------
+    # ------------------ LOGIN ------------------
     with t1:
-        u = st.text_input("Username", key="login_user")
-        p = st.text_input("Password", type="password", key="login_pass")
+        u_login = st.text_input("Username", key="login_user")
+        p_login = st.text_input("Password", type="password", key="login_pass")
 
         if st.button("Access Vault", key="btn_login"):
-            if not rate_limit(u, "LOGIN"):
+            if not rate_limit(u_login, "LOGIN"):
                 st.error("Too many attempts. Try later.")
                 st.stop()
 
-            hp = hashlib.sha256(p.encode()).hexdigest()
-            res = conn.table("users").select("*").eq("username", u).eq("password", hp).execute()
-            if res.data:
-                st.session_state.auth["user"] = u
-                st.session_state.auth["login_time"] = datetime.utcnow()
-                audit(u, "LOGIN")
-                st.rerun()
-            else:
-                st.error("Access Denied")
-
-        # ------------------- RECOVERY EXPANDER -------------------
-        with st.expander("🔑 Forgot Passkey?"):
-            ru = st.text_input("Username", key="recov_user")
-            rc = st.text_input("Recovery Code", key="recov_code")
-            np = st.text_input("New Passkey", type="password", key="recov_pass")
-            if st.button("Reset Passkey", key="btn_reset"):
-                res = conn.table("users").select("*").eq("username", ru).eq("recovery_code", rc).execute()
+            hp = hashlib.sha256(p_login.encode()).hexdigest()
+            try:
+                res = conn.table("users").select("*") \
+                    .eq("username", u_login).eq("password", hp).execute()
                 if res.data:
-                    conn.table("users").update({
-                        "password": hashlib.sha256(np.encode()).hexdigest()
-                    }).eq("username", ru).execute()
-                    audit(ru, "RECOVERY_RESET")
-                    st.success("Passkey reset successful.")
+                    st.session_state.auth["user"] = u_login
+                    st.session_state.auth["login_time"] = datetime.utcnow()
+                    audit(u_login, "LOGIN")
+                    st.rerun()
                 else:
-                    st.error("Invalid recovery details.")
+                    st.error("Access Denied: Invalid username or password")
+            except Exception as e:
+                st.error(f"Login Failed: {e}")
 
-    # ---------------------- REGISTER TAB ----------------------
+        # Recovery
+        with st.expander("🔑 Forgot Passkey?"):
+            ru = st.text_input("Username", key="rec_user")
+            rc = st.text_input("Recovery Code", key="rec_code")
+            np = st.text_input("New Passkey", type="password", key="rec_newpass")
+            if st.button("Reset Passkey", key="btn_reset"):
+                try:
+                    res = conn.table("users").select("*") \
+                        .eq("username", ru).eq("recovery_code", rc).execute()
+                    if res.data:
+                        conn.table("users").update({
+                            "password": hashlib.sha256(np.encode()).hexdigest()
+                        }).eq("username", ru).execute()
+                        audit(ru, "RECOVERY_RESET")
+                        st.success("Passkey reset successful.")
+                    else:
+                        st.error("Invalid recovery details.")
+                except Exception as e:
+                    st.error(f"Recovery Failed: {e}")
+
+    # ------------------ REGISTER ------------------
     with t2:
         nu = st.text_input("New Username", key="reg_user")
         np_reg = st.text_input("New Passkey", type="password", key="reg_pass")
-        agree = st.checkbox("I accept the Terms of Service", key="reg_agree")
+        agree = st.checkbox("I accept the Terms of Service", key="tos_agree")
 
         if st.button("Create Identity", key="btn_register") and agree:
-            rc_new = "".join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(12))
-            conn.table("users").insert({
-                "username": nu,
-                "password": hashlib.sha256(np_reg.encode()).hexdigest(),
-                "recovery_code": rc_new,
-                "op_count": 0,
-                "payment_count": 0
-            }).execute()
-            st.success("Account created.")
-            st.warning("SAVE THIS RECOVERY CODE")
-            st.code(rc_new)
-            st.download_button(
-                "Download Recovery Key",
-                f"USER:{nu}\nRECOVERY:{rc_new}",
-                f"Recovery_{nu}.txt",
-                key=f"dl_rc_{nu}"
-            )
+            try:
+                # Check for duplicate username
+                existing = conn.table("users").select("*").eq("username", nu).execute()
+                if existing.data:
+                    st.error(f"Username '{nu}' already exists. Choose another.")
+                else:
+                    rc_new = "".join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(12))
+                    conn.table("users").insert({
+                        "username": nu,
+                        "password": hashlib.sha256(np_reg.encode()).hexdigest(),
+                        "recovery_code": rc_new,
+                        "op_count": 0,
+                        "payment_count": 0
+                    }).execute()
+                    st.success("Account created.")
+                    st.warning("SAVE THIS RECOVERY CODE")
+                    st.code(rc_new)
+                    st.download_button(
+                        "Download Recovery Key",
+                        f"USER:{nu}\nRECOVERY:{rc_new}",
+                        f"Recovery_{nu}.txt",
+                        key=f"dl_rc_{nu}"
+                    )
+            except Exception as e:
+                st.error(f"Registration Failed: {e}")
 
     st.stop()
+
 
 
 # ============================================================
