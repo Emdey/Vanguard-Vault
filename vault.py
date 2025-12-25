@@ -6,6 +6,7 @@ import streamlit as st
 import os, io, base64, hashlib, secrets, string
 from datetime import datetime, timedelta
 import pandas as pd
+import hmac
 from PIL import Image
 
 from cryptography.fernet import Fernet
@@ -397,9 +398,9 @@ elif mode == "RSA Hybrid":
     st.header("🔑 RSA Hybrid Suite (Secure & Future-Proof)")
 
     # Ensure master_key is available
-    master_key = st.session_state.master_key
+    master_key = st.session_state.get("master_key")
     if not master_key:
-        st.warning("Enter your Master Key in AES module first.")
+        st.warning("⚠️ Enter your Master Key in the 'AES Symmetric' module first to handle keys.")
         st.stop()
 
     tab_key, tab_encrypt, tab_decrypt = st.tabs(["🔑 KEYGEN", "🔒 ENCRYPT", "🔓 DECRYPT"])
@@ -408,27 +409,30 @@ elif mode == "RSA Hybrid":
     with tab_key:
         k_size = st.select_slider("Bit Strength", options=[2048, 4096], value=2048)
         if st.button("Generate RSA Keypair") and check_usage_limit(user):
-            priv = rsa.generate_private_key(
-                public_exponent=65537,
-                key_size=k_size
-            )
-            pem_pub = priv.public_key().public_bytes(
-                encoding=serialization.Encoding.PEM,
-                format=serialization.PublicFormat.SubjectPublicKeyInfo
-            ).decode()
-            pem_priv = priv.private_bytes(
-                encoding=serialization.Encoding.PEM,
-                format=serialization.PrivateFormat.PKCS8,
-                encryption_algorithm=serialization.BestAvailableEncryption(master_key.encode())
-            ).decode()
+            try:
+                priv = rsa.generate_private_key(
+                    public_exponent=65537,
+                    key_size=k_size
+                )
+                pem_pub = priv.public_key().public_bytes(
+                    encoding=serialization.Encoding.PEM,
+                    format=serialization.PublicFormat.SubjectPublicKeyInfo
+                ).decode()
+                pem_priv = priv.private_bytes(
+                    encoding=serialization.Encoding.PEM,
+                    format=serialization.PrivateFormat.PKCS8,
+                    encryption_algorithm=serialization.BestAvailableEncryption(master_key.encode())
+                ).decode()
 
-            st.write("📤 **Public Key (Share This)**")
-            st.text_area("Public Key", pem_pub, height=150)
+                st.write("📤 **Public Key (Share This)**")
+                st.code(pem_pub)
 
-            st.write("🔑 **Private Key (KEEP SECRET)**")
-            st.text_area("Private Key", pem_priv, height=200)
+                st.write("🔑 **Private Key (KEEP SECRET)**")
+                st.code(pem_priv)
 
-            increment_usage(user, f"RSA_KEYGEN_{k_size}")
+                increment_usage(user, f"RSA_KEYGEN_{k_size}")
+            except Exception as e:
+                st.error(f"Generation Failed: {e}")
 
     # ---------------- Hybrid Encryption ----------------
     with tab_encrypt:
@@ -451,15 +455,15 @@ elif mode == "RSA Hybrid":
                     )
                 )
 
-                st.success("Vault Created!")
-                st.write("Recipient Unlock Key (Base64)")
-                st.text_area("Encrypted Key", base64.b64encode(enc_s_key).decode(), height=150)
+                st.success("✅ Vault Created!")
+                st.write("**Recipient Unlock Key (Base64):**")
+                st.code(base64.b64encode(enc_s_key).decode())
 
                 st.download_button("Download .vault", enc_file, f"{file_upload.name}.vault")
                 increment_usage(user, "RSA_HYBRID_ENC")
 
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.error(f"Encryption Error: {e}")
 
     # ---------------- Hybrid Decryption ----------------
     with tab_decrypt:
@@ -480,13 +484,14 @@ elif mode == "RSA Hybrid":
                         label=None
                     )
                 )
+                st.success("🔓 Decryption Successful!")
                 st.download_button(
                     "Download Decrypted File",
                     Fernet(s_key).decrypt(vault_file.read()),
                     "unlocked_file"
                 )
             except Exception as e:
-                st.error(f"Decryption Failed: {e}")
+                st.error(f"Decryption Failed: {e}. Check your Master Key or Private Key format.")
 
 
 # ============================================================
@@ -510,32 +515,40 @@ elif mode == "Diffie-Hellman":
     with tab_gen:
         if st.button("Generate DH Public Key") and check_usage_limit(user):
             priv = params.generate_private_key()
-            st.session_state.dh_priv = priv
+            st.session_state.dh_priv = priv # Stored in session for Step 2
             pub = priv.public_key().public_bytes(
                 serialization.Encoding.PEM,
                 serialization.PublicFormat.SubjectPublicKeyInfo
             ).decode()
-            st.code(pub, label="Your DH Public Key (Send to partner)")
+            
+            st.write("**Your DH Public Key (Send to partner):**")
+            st.code(pub)
             increment_usage(user, "DH_KEYGEN")
 
     # ---------------- Compute Shared Secret ----------------
     with tab_secret:
-        partner_pub = st.text_area("Paste Partner's Public Key")
-        if st.button("Calculate Shared Secret") and partner_pub:
-            try:
-                p_pub = serialization.load_pem_public_key(partner_pub.encode())
-                shared = st.session_state.dh_priv.exchange(p_pub)
-                # Derive 256-bit AES key via HKDF
-                derived = HKDF(
-                    algorithm=hashes.SHA256(),
-                    length=32,
-                    salt=None,
-                    info=b'handshake'
-                ).derive(shared)
-                st.success("🤝 Shared Secret Established!")
-                st.code(base64.urlsafe_b64encode(derived).decode(), label="Usable AES Key")
-            except Exception as e:
-                st.error(f"Error: {e}")
+        partner_pub_input = st.text_area("Paste Partner's Public Key")
+        if st.button("Calculate Shared Secret") and partner_pub_input:
+            if "dh_priv" not in st.session_state:
+                st.error("❌ Local Private Key missing. Please go to 'Generate My Key' first.")
+            else:
+                try:
+                    p_pub = serialization.load_pem_public_key(partner_pub_input.encode())
+                    shared = st.session_state.dh_priv.exchange(p_pub)
+                    
+                    # Derive 256-bit AES key via HKDF
+                    derived = HKDF(
+                        algorithm=hashes.SHA256(),
+                        length=32,
+                        salt=None,
+                        info=b'handshake'
+                    ).derive(shared)
+                    
+                    st.success("🤝 Shared Secret Established!")
+                    st.write("**Usable AES Key (Derived):**")
+                    st.code(base64.urlsafe_b64encode(derived).decode())
+                except Exception as e:
+                    st.error(f"Error calculating secret: {e}")
 
 
 
@@ -571,16 +584,19 @@ elif mode == "Hashing":
 
             # Compute HMAC if key provided
             if use_hmac and key_input:
+                # hmac.new expects (key, msg, digestmod)
                 h = hmac.new(key_input.encode(), inp.encode(), hash_func)
                 digest = h.hexdigest()
             else:
                 digest = hash_func(inp.encode()).hexdigest()
 
-            st.code(digest, label=f"{algo} Hash")
+            # UI Fix: Removed 'label' from st.code
+            st.write(f"**{algo} Output:**")
+            st.code(digest)
+            
             increment_usage(user, f"HASH_{algo.replace(' ', '_')}")
         except Exception as e:
             st.error(f"Hashing Failed: {e}")
-
 
 
 # ============================================================
