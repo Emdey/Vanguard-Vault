@@ -36,7 +36,6 @@ st.set_page_config(
 # ==============================
 # Supabase Initialization
 # ==============================
-# 1. Pull keys from secrets
 S_URL = st.secrets.get("SUPABASE_URL")
 S_KEY = st.secrets.get("SUPABASE_KEY")
 
@@ -44,20 +43,21 @@ if not S_URL or not S_KEY:
     st.error("❌ Configuration Missing: Check your Streamlit Secrets.")
     st.stop()
 
+from supabase import create_client, Client
+
 try:
-    # 2. Use the direct Client (More compatible with Python 3.13)
-    from supabase import create_client, Client
     conn: Client = create_client(S_URL, S_KEY)
-    
-    # 3. Connection Test
-    # This pings your 'users' table to make sure the key works
-    conn.table("users").select("count", count="exact").limit(1).execute()
+
+    # Hard connection test
+    conn.table("users").select("id").limit(1).execute()
+
     st.sidebar.success("📡 Database Linked")
-    
+
 except Exception as e:
-    st.error(f"❌ Connection Refused: {e}")
-    st.info("If this persists, ensure your Supabase project is not 'Paused'.")
+    st.error(f"❌ Supabase Connection Failed: {e}")
+    st.info("Ensure the Supabase project is ACTIVE (not paused).")
     st.stop()
+
 
 # ============================================================
 # GLOBAL CONFIG
