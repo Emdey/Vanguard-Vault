@@ -157,17 +157,19 @@ def get_usage(user: str) -> int:
         return 0
 
 
-def increment_usage(user: str, action: str) -> None:
-    """Increment user's operation count and log the action."""
-    if user == ADMIN_USERNAME:
-        return  # Admin is unlimited
+def increment_usage(user_name: str, action: str) -> None:
+    if user_name == ADMIN_USERNAME:
+        return
     try:
-        curr = get_usage(user)
-        conn.table("users").update({"op_count": curr + 1}).eq("username", user).execute()
-        audit(user, action)
+        curr = get_usage(user_name)
+        # Update Database
+        conn.table("users").update({"op_count": curr + 1}).eq("username", user_name).execute()
+        # Log the action
+        audit(user_name, action)
+        # Force a rerun so the Sidebar Metric updates immediately
+        st.rerun() 
     except Exception as e:
-        st.error(f"Error incrementing usage for {user}: {e}")
-
+        st.error(f"Error: {e}")
 
 def check_usage_limit(user: str) -> bool:
     """
@@ -306,6 +308,24 @@ with st.sidebar:
     if st.button("Logout"):
         secure_logout()
 
+        # --- USAGE MONITOR SECTION ---
+    st.markdown("---")
+    st.subheader("📊 Operation Monitor")
+    
+    # Fetch real-time usage from your DB
+    current_usage = get_usage(user)
+    max_limit = FREE_LIMIT 
+    
+    st.metric(label="Credits Used", value=f"{current_usage} / {max_limit}")
+    
+    # Progress bar visualization
+    progress_val = min(current_usage / max_limit, 1.0)
+    st.progress(progress_val)
+    
+    if current_usage >= max_limit:
+        st.warning("🔒 Limit Reached. Top up required.")
+    st.markdown("---")
+
 menu = [
     "AES Symmetric",
     "RSA Hybrid",
@@ -345,31 +365,34 @@ if mode == "AES Symmetric":
     key_mode = st.radio("Key Source:", ["Use Master Password", "Use Manual AES Key"])
     
     fernet = None
-    
+
     if key_mode == "Use Master Password":
         m_pass = st.text_input("Master Password", type="password")
         if m_pass:
-            if "aes_salt" not in st.session_state:
-                st.session_state.aes_salt = os.urandom(16)
+            # FIX: Use the username as a persistent salt. 
+            # This ensures the key is always the same for this specific user.
+            static_salt = hashlib.sha256(user.encode()).digest()[:16]
             
             kdf = PBKDF2HMAC(
                 algorithm=hashes.SHA256(),
                 length=32,
-                salt=st.session_state.aes_salt,
+                salt=static_salt,
                 iterations=200_000
             )
             derived = base64.urlsafe_b64encode(kdf.derive(m_pass.encode()))
             fernet = Fernet(derived)
-    else:
-        manual_key = st.text_input("Paste AES Key", type="password")
+            
+    else:  # This handles the "Use Manual AES Key" option
+        manual_key = st.text_input("Paste Manual AES Key", type="password", help="Enter your 32-byte Base64-encoded key here.")
         if manual_key:
             try:
                 fernet = Fernet(manual_key.encode())
-            except Exception:
-                st.error("Invalid AES Key format. Ensure it is a 32-byte Base64 string.")
+            except Exception as e:
+                st.error(f"Invalid Key Format: {e}")
+                fernet = None
 
     # ---------------- 2. TEXT LOCKER ----------------
-    with tab_text:
+     with tab_text:
         if fernet:
             col1, col2 = st.columns(2)
             with col1:
@@ -392,7 +415,7 @@ if mode == "AES Symmetric":
             st.info("Please provide a password or key above to use the locker.")
 
     # ---------------- 3. FILE VAULT ----------------
-    with tab_file:
+      with tab_file:
         if fernet:
             file_upload = st.file_uploader("Upload File/Video")
             if file_upload and st.button("📦 Execute File Lock") and check_usage_limit(user):
