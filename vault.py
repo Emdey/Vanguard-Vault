@@ -121,9 +121,9 @@ def enforce_session_timeout():
 def secure_logout():
     for k in list(st.session_state.keys()):
         del st.session_state[k]
-    st.success("🔒 Logged out due to inactivity."
-               " Please log in again to continue.")
-    st.experimental_rerun()
+    st.success("🔒 Logged out due to inactivity. Please log in again to continue.")
+    st.rerun()
+
     
 
 init_session()
@@ -862,6 +862,47 @@ elif mode == "Steganography":
             except Exception as e:
                 st.error(f"Stego Extraction Failed: {e}")
 
+
+# ============================================================
+# SUPPORT MODULE
+# ============================================================
+elif mode == "📡 Support":
+    st.header("📡 Support & Assistance")
+
+    st.markdown("""
+If you are experiencing issues, billing problems, or need help using Vanguard Vault,
+submit a support ticket below. Our team will review and respond.
+""")
+
+    subject = st.text_input("Subject")
+    message = st.text_area("Describe your issue")
+
+    if st.button("📨 Submit Support Ticket"):
+        if not subject or not message:
+            st.warning("Please complete all fields.")
+        else:
+            try:
+                conn.table("support_tickets").insert({
+                    "username": user,
+                    "subject": subject,
+                    "message": message,
+                    "status": "OPEN",
+                    "timestamp": datetime.utcnow().isoformat()
+                }).execute()
+
+                audit(user, "SUPPORT_TICKET")
+                st.success("✅ Support ticket submitted successfully.")
+            except Exception as e:
+                st.error(f"Failed to submit ticket: {e}")
+
+    st.markdown("---")
+    st.subheader("📞 Direct Contact")
+    st.markdown(
+        f"""
+- WhatsApp Support: [Chat Now](https://wa.me/{WHATSAPP_NUMBER})
+- Include your **username** and **issue subject** when contacting support.
+"""
+    )
 
 
 # ============================================================
