@@ -888,16 +888,19 @@ Your ticket history is displayed below.
             st.warning("All fields are required.")
         else:
             try:
+                # Insert ticket into Supabase
                 conn.table("support_tickets").insert({
                     "username": user,
                     "subject": subject,
                     "message": message,
-                    "priority": priority,
+                    "priority": priority.upper(),
                     "status": "OPEN",
                     "timestamp": datetime.utcnow().isoformat()
                 }).execute()
 
+                # Audit log
                 audit(user, "SUPPORT_TICKET_CREATED")
+
                 st.success("✅ Ticket submitted successfully. It will appear in your history below.")
                 st.rerun()  # Auto-refresh to show newly created ticket
 
@@ -917,7 +920,7 @@ Your ticket history is displayed below.
 
         if tickets:
             for t in tickets:
-                ticket_priority = t.get("priority", "Normal")
+                ticket_priority = t.get("priority", "NORMAL")
                 ticket_status = t.get("status", "OPEN")
                 # Color coding for priority
                 color = {
@@ -947,6 +950,7 @@ Your ticket history is displayed below.
 - Include your **username** and **ticket subject** when contacting support.
 """
     )
+
 
 
 # ============================================================
