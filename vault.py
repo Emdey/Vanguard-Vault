@@ -864,43 +864,87 @@ elif mode == "Steganography":
 
 
 # ============================================================
-# SUPPORT MODULE
+# SUPPORT MODULE — USER-SIDE TICKET HISTORY (ENHANCED)
 # ============================================================
 elif mode == "📡 Support":
     st.header("📡 Support & Assistance")
 
     st.markdown("""
-If you are experiencing issues, billing problems, or need help using Vanguard Vault,
-submit a support ticket below. Our team will review and respond.
+Submit a support ticket if you encounter issues, billing problems, or need help using Vanguard Vault.
+Your ticket history is displayed below.
 """)
 
+    # --- Ticket Submission ---
     subject = st.text_input("Subject")
+    priority = st.selectbox(
+        "Priority Level",
+        ["LOW", "MEDIUM", "HIGH"],
+        help="Use HIGH only for critical issues or payment problems."
+    )
     message = st.text_area("Describe your issue")
 
-    if st.button("📨 Submit Support Ticket"):
+    if st.button("Submit Ticket"):
         if not subject or not message:
-            st.warning("Please complete all fields.")
+            st.warning("All fields are required.")
         else:
             try:
                 conn.table("support_tickets").insert({
                     "username": user,
                     "subject": subject,
                     "message": message,
+                    "priority": priority,
                     "status": "OPEN",
                     "timestamp": datetime.utcnow().isoformat()
                 }).execute()
 
-                audit(user, "SUPPORT_TICKET")
-                st.success("✅ Support ticket submitted successfully.")
-            except Exception as e:
-                st.error(f"Failed to submit ticket: {e}")
+                audit(user, "SUPPORT_TICKET_CREATED")
+                st.success("✅ Ticket submitted successfully. It will appear in your history below.")
+                st.rerun()  # Auto-refresh to show newly created ticket
 
+            except Exception as e:
+                st.error(f"Submission failed: {e}")
+
+    # --- User-Side Ticket History ---
+    st.markdown("---")
+    st.subheader("📨 My Support Tickets")
+
+    try:
+        tickets = conn.table("support_tickets") \
+            .select("*") \
+            .eq("username", user) \
+            .order("timestamp", desc=True) \
+            .execute().data
+
+        if tickets:
+            for t in tickets:
+                ticket_priority = t.get("priority", "Normal")
+                ticket_status = t.get("status", "OPEN")
+                # Color coding for priority
+                color = {
+                    "HIGH": "#ff4d4f",
+                    "MEDIUM": "#faad14",
+                    "LOW": "#52c41a"
+                }.get(ticket_priority.upper(), "#1890ff")
+
+                with st.expander(f"#{t['id']} | {t['subject']} | {ticket_status} | {ticket_priority}"):
+                    st.markdown(f"**Priority:** <span style='color:{color};font-weight:bold'>{ticket_priority}</span>", unsafe_allow_html=True)
+                    st.markdown(f"**Status:** {ticket_status}")
+                    st.markdown(f"**Submitted:** {t['timestamp']}")
+                    st.markdown("---")
+                    st.write(t['message'])
+        else:
+            st.info("No support tickets submitted yet.")
+
+    except Exception as e:
+        st.error(f"Unable to load ticket history: {e}")
+
+    # --- Direct Contact ---
     st.markdown("---")
     st.subheader("📞 Direct Contact")
     st.markdown(
         f"""
-- WhatsApp Support: [Chat Now](https://wa.me/{WHATSAPP_NUMBER})
-- Include your **username** and **issue subject** when contacting support.
+- **WhatsApp Support:** [Chat Now](https://wa.me/{WHATSAPP_NUMBER})
+- Include your **username** and **ticket subject** when contacting support.
 """
     )
 
