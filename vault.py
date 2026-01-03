@@ -2,23 +2,40 @@
 # VANGUARD VAULT — PAID-READY COMMERCIAL EDITION
 # ============================================================
 
+# --- Core ---
 import streamlit as st
-import os, io, base64, hashlib, secrets, string
+import os
+import io
+import base64
+import hashlib
+import secrets
+import string
 from datetime import datetime, timedelta
+import tempfile
+import math
+
+# --- Data & Utilities ---
 import pandas as pd
 import hmac
-from PIL import Image
 
+# --- Image / Video ---
+from PIL import Image
+import cv2
+import numpy as np
+import stepic  # For image steganography
+
+# --- Cryptography ---
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa, padding, dh
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
+# --- Database ---
 from supabase import create_client, Client
-import stepic
 
+# --- Custom Styling / Utilities ---
 from style import apply_custom_theme, show_status
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 apply_custom_theme()
 show_status()
@@ -87,6 +104,9 @@ def init_session():
         st.session_state.crypto = {}
     if "master_key" not in st.session_state:
         st.session_state.master_key = None
+    if "hash_output" not in st.session_state:
+        st.session_state.hash_output = ""
+
 
 def enforce_session_timeout():
     if st.session_state.auth["login_time"]:
@@ -96,7 +116,10 @@ def enforce_session_timeout():
 def secure_logout():
     for k in list(st.session_state.keys()):
         del st.session_state[k]
-    st.rerun()
+    st.success("🔒 Logged out due to inactivity."
+               " Please log in again to continue.")
+    st.experimental_rerun()
+    
 
 init_session()
 enforce_session_timeout()
@@ -341,7 +364,8 @@ menu = [
     "Hashing",
     "Steganography",
     "📡 Support",
-    "ℹ️ About"
+    "ℹ️ About",
+    "🆘 Help & Guide"  
 ]
 
 if user == ADMIN_USERNAME:
@@ -350,17 +374,16 @@ if user == ADMIN_USERNAME:
 mode = st.selectbox("Module", menu)
 
 # ============================================================
-# AES SYMMETRIC MODULE
+# AES SYMMETRIC MODULE (Refactored)
 # ============================================================
 if mode == "AES Symmetric":
     st.header("🛡️ AES-256 Symmetric Locker")
-
     tab_keygen, tab_text, tab_file = st.tabs(["🔑 KEYGEN", "📝 Text Locker", "🎬 File/Video Vault"])
 
     # ---------------- 1. KEY GENERATION ----------------
     with tab_keygen:
         st.subheader("Generate a Strong AES-256 Key")
-        st.info("This generates a random 32-byte key. Unlike a password, this is nearly impossible to brute-force.")
+        st.info("This generates a random 32-byte key. Never store it in plain text elsewhere.")
         
         if st.button("Generate New Random Key"):
             new_key = Fernet.generate_key().decode()
@@ -372,33 +395,22 @@ if mode == "AES Symmetric":
             st.write("**Encrypted Message:**")
             st.code(st.session_state.aes_ciphertext)
         if st.button("🧹 Clear Cipher Output"):
-           st.session_state.aes_ciphertext = ""
+            st.session_state.aes_ciphertext = ""
 
-
-
-    # ---------------- KEY SELECTION (Shared by all tabs) ----------------
+    # ---------------- 2. KEY SELECTION ----------------
     st.markdown("---")
     key_mode = st.radio("Key Source:", ["Use Master Password", "Use Manual AES Key"])
-    
     fernet = None
 
     if key_mode == "Use Master Password":
         m_pass = st.text_input("Master Password", type="password")
         if m_pass:
-            # Persistent Salt tied to username ensures recovery is always possible
             static_salt = hashlib.sha256(user.encode()).digest()[:16]
-            
-            kdf = PBKDF2HMAC(
-                algorithm=hashes.SHA256(),
-                length=32,
-                salt=static_salt,
-                iterations=200_000
-            )
+            kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=static_salt, iterations=200_000)
             derived = base64.urlsafe_b64encode(kdf.derive(m_pass.encode()))
             fernet = Fernet(derived)
-            
-    else:  # Manual AES Key mode
-        manual_key = st.text_input("Paste Manual AES Key", type="password", help="Enter your 32-byte Base64-encoded key here.")
+    else:
+        manual_key = st.text_input("Paste Manual AES Key", type="password", help="Enter your 32-byte Base64 key here.")
         if manual_key:
             try:
                 fernet = Fernet(manual_key.encode())
@@ -406,18 +418,15 @@ if mode == "AES Symmetric":
                 st.error(f"Invalid Key Format: {e}")
                 fernet = None
 
-    # ---------------- 2. TEXT LOCKER ----------------
+    # ---------------- 3. TEXT LOCKER ----------------
     with tab_text:
         if fernet:
             col1, col2 = st.columns(2)
             with col1:
                 plaintext = st.text_area("Plaintext to Encrypt")
                 if st.button("🔒 Encrypt Text") and plaintext and check_usage_limit(user):
-                    st.session_state.aes_ciphertext = (
-                        fernet.encrypt(plaintext.encode()).decode()
-                        )
+                    st.session_state.aes_ciphertext = fernet.encrypt(plaintext.encode()).decode()
                     increment_usage(user, "AES_TEXT_ENC")
-
 
             with col2:
                 ciphertext = st.text_area("Ciphertext to Decrypt")
@@ -429,60 +438,51 @@ if mode == "AES Symmetric":
                     except:
                         st.error("Decryption Failed: Invalid Key or Corrupt Data")
         else:
-            st.info("Please provide a password or key above to use the locker.")
+            st.info("Provide a password or AES key above to use the text locker.")
 
-    # ---------------- 3. FILE VAULT ----------------
+    # ---------------- 4. FILE/VIDEO VAULT ----------------
     with tab_file:
         if fernet:
             file_upload = st.file_uploader("Upload File/Video")
             if file_upload and st.button("📦 Execute File Lock") and check_usage_limit(user):
                 enc_data = fernet.encrypt(file_upload.read())
-                st.download_button(
-                    f"📥 Download {file_upload.name}.vanguard",
-                    enc_data,
-                    f"{file_upload.name}.vanguard"
-                )
+                st.download_button(f"📥 Download {file_upload.name}.vanguard", enc_data, f"{file_upload.name}.vanguard")
                 increment_usage(user, "AES_FILE_ENC")
 
-            st.markdown("---")
             vault_upload = st.file_uploader("Upload .vanguard Vault to Unlock", type=['vanguard'])
-            if vault_upload and st.button("🔓 Decrypt Vault"):
+            if vault_upload and st.button("🔓 Decrypt Vault") and check_usage_limit(user):
                 try:
                     dec_data = fernet.decrypt(vault_upload.read())
                     st.success("Vault Unlocked!")
                     st.download_button("📥 Download Original File", dec_data, "restored_file")
+                    increment_usage(user, "AES_FILE_DEC")
                 except:
                     st.error("Decryption Failed: Invalid Key or Corrupt Data")
         else:
-            st.info("Please provide a password or key above to use the vault.")
+            st.info("Provide a password or AES key above to use the file vault.")
 
 
 # ============================================================
-# RSA HYBRID MODULE
+# RSA HYBRID MODULE 
 # ============================================================
 elif mode == "RSA Hybrid":
     st.header("🔐 RSA-AES Hybrid System")
     tab_keys, tab_encrypt, tab_decrypt = st.tabs(["🔑 Key Management", "🔒 Encrypt", "🔓 Decrypt"])
 
+    # ---------------- Key Generation ----------------
     with tab_keys:
         st.subheader("Generate Asymmetric Key Pair")
         k_size = st.select_slider("Select Bit Strength", options=[2048, 4096], value=2048)
         
         if st.button("Generate RSA Keypair") and check_usage_limit(user):
             try:
-                # Industry Standard RSA Generation
-                priv = rsa.generate_private_key(
-                    public_exponent=65537,
-                    key_size=k_size
-                )
+                priv = rsa.generate_private_key(public_exponent=65537, key_size=k_size)
                 
-                # Export Public Key (Standard format)
                 pem_pub = priv.public_key().public_bytes(
                     encoding=serialization.Encoding.PEM,
                     format=serialization.PublicFormat.SubjectPublicKeyInfo
                 ).decode()
                 
-                # Export Private Key (Standard PKCS8 format)
                 pem_priv = priv.private_bytes(
                     encoding=serialization.Encoding.PEM,
                     format=serialization.PrivateFormat.PKCS8,
@@ -491,14 +491,13 @@ elif mode == "RSA Hybrid":
 
                 st.write("📤 **Public Key (Share This)**")
                 st.code(pem_pub)
-
                 st.write("🔑 **Private Key (KEEP SECRET)**")
                 st.code(pem_priv)
-
                 st.success(f"✅ {k_size}-bit Keypair Generated!")
+                
                 increment_usage(user, f"RSA_KEYGEN_{k_size}")
             except Exception as e:
-                st.error(f"Generation Failed: {e}")
+                st.error(f"RSA Key Generation Failed: {e}")
 
     # ---------------- Hybrid Encryption ----------------
     with tab_encrypt:
@@ -507,12 +506,11 @@ elif mode == "RSA Hybrid":
         
         if file_upload and pub_key_input and st.button("Execute Hybrid Lock") and check_usage_limit(user):
             try:
-                # 1. Generate a random symmetric session key (AES)
+                # 1. Generate random AES session key
                 s_key = Fernet.generate_key()
-                # 2. Encrypt the file content with AES
+                # 2. Encrypt the file with AES
                 enc_file_content = Fernet(s_key).encrypt(file_upload.read())
-
-                # 3. Encrypt the AES key with the recipient's RSA Public Key
+                # 3. Encrypt AES key with recipient's RSA public key
                 recipient_pub = serialization.load_pem_public_key(pub_key_input.encode())
                 enc_s_key = recipient_pub.encrypt(
                     s_key,
@@ -524,12 +522,11 @@ elif mode == "RSA Hybrid":
                 )
 
                 st.success("✅ Vault Created!")
-                st.write("**Recipient Unlock Key (Send this along with the file):**")
+                st.write("**Recipient Unlock Key (Send with file):**")
                 st.code(base64.b64encode(enc_s_key).decode())
-
                 st.download_button("Download .vault File", enc_file_content, f"{file_upload.name}.vault")
-                increment_usage(user, "RSA_HYBRID_ENC")
 
+                increment_usage(user, "RSA_HYBRID_ENC")
             except Exception as e:
                 st.error(f"Encryption Error: {e}")
 
@@ -539,15 +536,9 @@ elif mode == "RSA Hybrid":
         unlock_key_input = st.text_area("Encrypted Unlock Key (Base64)")
         vault_file = st.file_uploader("Upload .vault File", key="rsa_dec_file")
         
-        if st.button("🔓 Decrypt & Extract") and vault_file and priv_key_input and unlock_key_input:
+        if vault_file and priv_key_input and unlock_key_input and st.button("🔓 Decrypt & Extract") and check_usage_limit(user):
             try:
-                # 1. Load the Private Key
-                priv = serialization.load_pem_private_key(
-                    priv_key_input.encode(),
-                    password=None # Change if you add password protection to PEMs
-                )
-                
-                # 2. Decrypt the AES Session Key using RSA
+                priv = serialization.load_pem_private_key(priv_key_input.encode(), password=None)
                 s_key = priv.decrypt(
                     base64.b64decode(unlock_key_input.encode()),
                     padding.OAEP(
@@ -556,57 +547,44 @@ elif mode == "RSA Hybrid":
                         label=None
                     )
                 )
-                
-                # 3. Decrypt the actual file content using the decrypted AES key
                 decrypted_content = Fernet(s_key).decrypt(vault_file.read())
-                
                 st.success("🔓 Decryption Successful!")
-                st.download_button(
-                    "Download Decrypted File",
-                    decrypted_content,
-                    "restored_file"
-                )
+                st.download_button("Download Decrypted File", decrypted_content, "restored_file")
+
+                increment_usage(user, "RSA_HYBRID_DEC")
             except Exception as e:
-                st.error(f"Decryption Failed: {e}. Check your keys and try again.")
+                st.error(f"Decryption Failed: {e}. Check keys and file.")
 
 # ============================================================
-# DIFFIE-HELLMAN MODULE (Performance Optimized)
+# DIFFIE-HELLMAN MODULE 
 # ============================================================
 elif mode == "Diffie-Hellman":
     st.header("🤝 Diffie-Hellman Key Exchange")
-    st.info("Establish a shared 256-bit AES key with another operator without ever sending the key itself.")
+    st.info("Establish a shared 256-bit AES key with another operator without sending the key itself.")
 
-    # Industry Standard: Load precomputed Group 14 parameters (2048-bit MODP)
-    # This prevents the app from hanging during prime number generation
-    from cryptography.hazmat.primitives.asymmetric import dh
-    
-    # RFC 3526 Group 14 parameters are baked into the library
-    # Use load_pem_parameters if you had a file, but for a web app, 
-    # we'll use a standard session-based approach with a small fix for stability.
+    # Initialize DH parameters once per session
     if "dh_params" not in st.session_state:
-        # Instead of generating (slow), we use the generator to ensure the user gets a session
-        # If speed is an issue in production, use a hardcoded PEM string.
         with st.spinner("Initializing Secure DH Group..."):
+            from cryptography.hazmat.primitives.asymmetric import dh
             st.session_state.dh_params = dh.generate_parameters(generator=2, key_size=2048)
-    
-    params = st.session_state.dh_params
-    tab_gen, tab_secret = st.tabs(["1️⃣ Generate My Key", "2️⃣ Compute Shared Secret"])
 
-    # 
+    params = st.session_state.dh_params
+
+    tab_gen, tab_secret = st.tabs(["1️⃣ Generate My Key", "2️⃣ Compute Shared Secret"])
 
     # ---------------- Generate DH Key ----------------
     with tab_gen:
-        st.subheader("Step 1: Your Public Component")
+        st.subheader("Step 1: Generate Your Public Key")
         if st.button("Generate My DH Public Key") and check_usage_limit(user):
-            # Generate local private key (Ephemeral)
             priv = params.generate_private_key()
-            st.session_state.dh_priv = priv 
-            
+            st.session_state.dh_priv = priv
+
             pub = priv.public_key().public_bytes(
                 serialization.Encoding.PEM,
                 serialization.PublicFormat.SubjectPublicKeyInfo
             ).decode()
-            
+
+            st.session_state.dh_pub = pub
             st.success("✅ Your key component is ready!")
             st.write("**Send this to your partner:**")
             st.code(pub)
@@ -614,37 +592,43 @@ elif mode == "Diffie-Hellman":
 
     # ---------------- Compute Shared Secret ----------------
     with tab_secret:
-        st.subheader("Step 2: Calculate Secret")
+        st.subheader("Step 2: Compute Shared Secret")
         partner_pub_input = st.text_area("Paste Partner's Public Key (PEM)")
-        
-        if st.button("Calculate Shared Secret") and partner_pub_input:
+
+        if st.button("Calculate Shared Secret") and partner_pub_input and check_usage_limit(user):
             if "dh_priv" not in st.session_state:
-                st.error("❌ Action Required: You must generate your own key in Tab 1 first.")
+                st.error("❌ Generate your own key in Tab 1 first.")
             else:
                 try:
-                    # Load partner's key
-                    p_pub = serialization.load_pem_public_key(partner_pub_input.encode())
-                    
-                    # Perform the mathematical exchange (The "Magic" of DH)
-                    shared_raw = st.session_state.dh_priv.exchange(p_pub)
-                    
-                    # Industry Standard: Run the raw secret through HKDF 
-                    # This turns a large prime number into a clean 256-bit AES key
+                    # Load partner's public key
+                    partner_pub = serialization.load_pem_public_key(partner_pub_input.encode())
+
+                    # Compute raw shared secret
+                    shared_raw = st.session_state.dh_priv.exchange(partner_pub)
+
+                    # Derive a 256-bit AES key using HKDF
                     derived_key = HKDF(
                         algorithm=hashes.SHA256(),
                         length=32,
                         salt=None,
-                        info=b'vanguard-dh-handshake' # Context binding
+                        info=b'vanguard-dh-handshake'
                     ).derive(shared_raw)
-                    
-                    st.success("🤝 Connection Established!")
-                    st.write("**Your Shared AES Key (Derived):**")
-                    st.code(base64.urlsafe_b64encode(derived_key).decode())
-                    st.warning("Note: Both you and your partner will now see the exact same key.")
-                    
+
+                    st.session_state.dh_shared_key = base64.urlsafe_b64encode(derived_key).decode()
+
+                    st.success("🤝 Shared Secret Established!")
+                    st.write("**Derived AES Key (256-bit):**")
+                    st.code(st.session_state.dh_shared_key)
+                    st.warning("Both you and your partner will now see the same key.")
+
+                    increment_usage(user, "DH_SECRET")
+
+                    # Clear ephemeral private key after computation for safety
+                    del st.session_state.dh_priv
+
                 except Exception as e:
                     st.error(f"Handshake Failed: {e}")
-                    st.info("Ensure the partner is using a Vanguard Vault Public Key.")
+                    st.info("Ensure your partner used a Vanguard Vault public key.")
 
 
 # ============================================================
@@ -653,7 +637,6 @@ elif mode == "Diffie-Hellman":
 elif mode == "Hashing":
     st.header("🔐 Secure Hash Generator")
 
-    # Select hashing algorithm
     algo = st.selectbox(
         "Algorithm",
         ["SHA-256 (Recommended)", "SHA-512", "MD5 (Weak, Legacy Only)"]
@@ -661,15 +644,13 @@ elif mode == "Hashing":
 
     inp = st.text_area("Input Text")
 
-    # Optional key for HMAC
     use_hmac = st.checkbox("Use HMAC (Keyed Hash)")
     key_input = None
     if use_hmac:
-        key_input = st.text_input("HMAC Key", type="password", help="Secret key for HMAC hashing")
+        key_input = st.text_input("HMAC Key", type="password")
 
-    if st.button("Generate Hash") and inp:
+    if st.button("Generate Hash") and inp and check_usage_limit(user):
         try:
-            # Select base hash function
             if "SHA-256" in algo:
                 hash_func = hashlib.sha256
             elif "SHA-512" in algo:
@@ -677,134 +658,178 @@ elif mode == "Hashing":
             else:
                 hash_func = hashlib.md5
 
-            # Compute HMAC if key provided
             if use_hmac and key_input:
-                # hmac.new expects (key, msg, digestmod)
-                h = hmac.new(key_input.encode(), inp.encode(), hash_func)
-                digest = h.hexdigest()
+                digest = hmac.new(
+                    key_input.encode(),
+                    inp.encode(),
+                    hash_func
+                ).hexdigest()
             else:
                 digest = hash_func(inp.encode()).hexdigest()
 
-            # UI Fix: Removed 'label' from st.code
-            st.write(f"**{algo} Output:**")
-            st.code(digest)
-            
+            st.session_state.hash_output = digest
             increment_usage(user, f"HASH_{algo.replace(' ', '_')}")
+
         except Exception as e:
             st.error(f"Hashing Failed: {e}")
 
+    if st.session_state.hash_output:
+        st.success("✅ Hash Generated")
+        st.code(st.session_state.hash_output)
+
+
 
 # ============================================================
-# STEGANOGRAPHY MODULE (Persistent Salt Edition)
+# STEGANOGRAPHY MODULE — Slimmed Version
 # ============================================================
 elif mode == "Steganography":
-    st.header("🖼️ Steganographic Covert Ops")
-
+    st.header("🖼️ / 🎬 Steganographic Covert Ops")
     tab_hide, tab_extract = st.tabs(["🔒 Hide Message", "🔓 Extract Message"])
 
-    # Persistent Salt tied to the account username
-    # This ensures the key derivation is consistent for this specific operator
     static_salt = hashlib.sha256(user.encode()).digest()[:16]
 
-    with tab_hide:
-        img_up = st.file_uploader("Cover Image (PNG)", type=['png'])
-        secret_msg = st.text_area("Secret Message")
-        
-        password = st.text_input(
-            "Encryption Password (Key)",
-            type="password",
-            help="This password is used to encrypt the message before hiding it.",
-            key="stego_hide_pass"
+    def derive_fernet(password):
+        kdf = PBKDF2HMAC(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=static_salt,
+            iterations=200_000
         )
+        key = base64.urlsafe_b64encode(kdf.derive(password.encode()))
+        return Fernet(key)
 
-        if img_up and secret_msg and password and st.button("Encode & Download") and check_usage_limit(user):
+    # ---------------- Hide Message ----------------
+    with tab_hide:
+        stego_type = st.radio("Media Type:", ["Image (PNG)", "Video (MP4/AVI)"])
+        secret_msg = st.text_area("Secret Message to Hide")
+        password = st.text_input("Encryption Password", type="password", key="stego_hide_pass")
+
+        if secret_msg and password and st.button("Encrypt & Hide") and check_usage_limit(user):
             try:
-                # Key Derivation (PBKDF2)
-                kdf = PBKDF2HMAC(
-                    algorithm=hashes.SHA256(),
-                    length=32,
-                    salt=static_salt,
-                    iterations=200_000
-                )
-                key = base64.urlsafe_b64encode(kdf.derive(password.encode()))
-                fernet = Fernet(key)
-                
-                # Encrypt the message
-                encrypted_msg = fernet.encrypt(secret_msg.encode())
-                
-                # Encode into image using stepic
-                buf = io.BytesIO()
-                # We save the encrypted message directly into the image pixels
-                stepic.encode(Image.open(img_up), encrypted_msg).save(buf, format="PNG")
-                
-                st.success("✅ Message Embedded Successfully!")
-                st.download_button("Download Secret PNG", buf.getvalue(), "secret_vanguard.png")
-                increment_usage(user, "STEGO_HIDE")
-            except Exception as e:
-                st.error(f"Encoding Failed: {e}")
+                fernet = derive_fernet(password)
+                enc_msg = fernet.encrypt(secret_msg.encode())
 
+                if stego_type == "Image (PNG)":
+                    img_up = st.file_uploader("Upload Cover Image (PNG)", type=['png'])
+                    if img_up:
+                        img = Image.open(img_up)
+                        max_bytes = (img.width * img.height * 3) // 8
+                        if len(enc_msg) > max_bytes:
+                            st.error(f"Message too large! Max: {max_bytes} bytes")
+                        else:
+                            buf = io.BytesIO()
+                            stepic.encode(img, enc_msg).save(buf, format="PNG")
+                            st.success("✅ Message Embedded in Image!")
+                            st.download_button("Download Secret PNG", buf.getvalue(), "secret_vanguard.png")
+                            increment_usage(user, "STEGO_HIDE")
+
+                else:  # Video
+                    video_up = st.file_uploader("Upload Video (MP4/AVI)", type=['mp4','avi'])
+                    if video_up:
+                        tmp_vid = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
+                        tmp_vid.write(video_up.read())
+                        tmp_vid.flush()
+
+                        cap = cv2.VideoCapture(tmp_vid.name)
+                        fps = cap.get(cv2.CAP_PROP_FPS)
+                        width, height = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                        bits_per_frame = width * height * 3
+                        max_bytes = (bits_per_frame * total_frames) // 8
+
+                        if len(enc_msg) > max_bytes:
+                            st.error(f"Message too large! Max: {max_bytes} bytes")
+                            cap.release()
+                        else:
+                            msg_bits = np.unpackbits(np.frombuffer(enc_msg, dtype=np.uint8))
+                            bit_idx, frame_counter = 0, 0
+                            frames_needed = math.ceil(len(msg_bits) / bits_per_frame)
+                            progress_bar = st.progress(0)
+
+                            out_temp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
+                            out = cv2.VideoWriter(out_temp.name, cv2.VideoWriter_fourcc(*'mp4v'), fps, (width, height))
+
+                            while True:
+                                ret, frame = cap.read()
+                                if not ret: break
+                                flat = frame.flatten()
+                                for i in range(len(flat)):
+                                    if bit_idx < len(msg_bits):
+                                        flat[i] = (flat[i] & 0xFE) | msg_bits[bit_idx]
+                                        bit_idx += 1
+                                    else:
+                                        break
+                                out.write(flat.reshape(frame.shape))
+                                frame_counter += 1
+                                progress_bar.progress(min(frame_counter / frames_needed, 1.0))
+                                if bit_idx >= len(msg_bits): break
+
+                            # Remaining frames
+                            while True:
+                                ret, frame = cap.read()
+                                if not ret: break
+                                out.write(frame)
+
+                            cap.release()
+                            out.release()
+                            progress_bar.empty()
+                            st.success("✅ Message Embedded in Video!")
+                            st.download_button("Download Video with Hidden Message", open(out_temp.name,'rb').read(), f"hidden_{video_up.name}")
+                            increment_usage(user, "VIDEO_STEGO_HIDE")
+
+            except Exception as e:
+                st.error(f"Stego Encoding Failed: {e}")
+
+    # ---------------- Extract Message ----------------
     with tab_extract:
-        img_enc = st.file_uploader("Upload Secret Image", type=['png'], key="stego_up")
-        extract_pass = st.text_input("Decryption Password (Key)", type="password", key="stego_extract_pass")
-        
-        if img_enc and extract_pass and st.button("Extract & Decrypt"):
+        stego_type = st.radio("Media Type to Extract:", ["Image (PNG)", "Video (MP4/AVI)"], key="extract_type")
+        extract_pass = st.text_input("Decryption Password", type="password", key="stego_extract_pass")
+
+        if extract_pass and st.button("Extract & Decrypt") and check_usage_limit(user):
             try:
-                # 1. Decode hidden data from image pixels
-                hidden_data = stepic.decode(Image.open(img_enc))
-                
-                # 2. Regenerate the same key using the same static salt
-                kdf = PBKDF2HMAC(
-                    algorithm=hashes.SHA256(),
-                    length=32,
-                    salt=static_salt,
-                    iterations=200_000
-                )
-                key = base64.urlsafe_b64encode(kdf.derive(extract_pass.encode()))
-                fernet = Fernet(key)
-                
-                # 3. Decrypt
-                decrypted_msg = fernet.decrypt(hidden_data)
-                st.success("🔓 Message Extracted!")
-                st.text_area("Extracted Content", decrypted_msg.decode())
+                fernet = derive_fernet(extract_pass)
+
+                if stego_type == "Image (PNG)":
+                    img_enc = st.file_uploader("Upload Stego Image (PNG)", type=['png'])
+                    if img_enc:
+                        hidden_data = stepic.decode(Image.open(img_enc))
+                        decrypted_msg = fernet.decrypt(hidden_data)
+                        st.success("🔓 Message Extracted from Image!")
+                        st.text_area("Extracted Content", decrypted_msg.decode())
+                        increment_usage(user, "STEGO_EXTRACT")
+
+                else:  # Video
+                    video_enc = st.file_uploader("Upload Video with Hidden Message", type=['mp4','avi'])
+                    if video_enc:
+                        tmp_vid = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
+                        tmp_vid.write(video_enc.read())
+                        tmp_vid.flush()
+
+                        cap = cv2.VideoCapture(tmp_vid.name)
+                        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                        bits, frame_counter = [], 0
+                        progress_bar = st.progress(0)
+
+                        while True:
+                            ret, frame = cap.read()
+                            if not ret: break
+                            bits.extend([val & 1 for val in frame.flatten()])
+                            frame_counter += 1
+                            progress_bar.progress(min(frame_counter / total_frames, 1.0))
+
+                        cap.release()
+                        progress_bar.empty()
+
+                        total_bytes = len(bits) // 8
+                        data = np.packbits(bits[:total_bytes*8]).tobytes()
+                        decrypted_msg = fernet.decrypt(data)
+                        st.success("🔓 Message Extracted from Video!")
+                        st.text_area("Extracted Content", decrypted_msg.decode())
+                        increment_usage(user, "VIDEO_STEGO_EXTRACT")
             except Exception as e:
-                st.error("Failed to extract or decrypt. Check the password or ensure this is a Vanguard Secret Image.")
+                st.error(f"Stego Extraction Failed: {e}")
 
-# ============================================================
-# SUPPORT MODULE
-# ============================================================
-elif mode == "📡 Support":
-    st.header("📡 Secure Support Channel")
-    
-    with st.form("ticket_form", clear_on_submit=True):
-        sub = st.selectbox("Subject", ["Payment Issue", "Bug Report", "Feature Request"])
-        msg = st.text_area("Message Body")
-        if st.form_submit_button("Transmit Ticket") and msg and check_usage_limit(user):
-            conn.table("support_tickets").insert({
-                "username": user,
-                "subject": sub,
-                "message": msg,
-                "status": "OPEN",
-                "timestamp": datetime.utcnow().isoformat()
-            }).execute()
-            st.success("🛰️ Signal Transmitted. Admin will review.")
-            audit(user, "SUPPORT_TICKET")
 
-    st.subheader("📡 Incoming Support Tickets")
-    tickets = conn.table("support_tickets").select("*").execute().data
-    if tickets:
-        for t in tickets:
-            status = t.get("status", "OPEN").upper()
-            color = "#FF6B6B" if status=="OPEN" else "#4ECDC4" if status=="RESOLVED" else "#FFD93D"
-            with st.expander(f"{t['username']} - {t['subject']}"):
-                st.markdown(f"**Message:** {t['message']}  \n"
-                            f"**Status:** <span style='color:white;background:{color};padding:4px 8px;border-radius:4px;'>{status}</span>",
-                            unsafe_allow_html=True)
-                if status=="OPEN" and st.button(f"Resolve Ticket {t['username']}", key=f"res_{t['username']}"):
-                    conn.table("support_tickets").update({"status":"RESOLVED"}).eq("username", t['username']).execute()
-                    audit(user, f"RESOLVE_TICKET_{t['username']}")
-                    st.experimental_rerun()
-    else:
-        st.info("No pending tickets.")
 
 # ============================================================
 # ABOUT MODULE
@@ -835,6 +860,151 @@ elif mode == "ℹ️ About":
         st.code(BANK_INFO)
         st.markdown(f"[Support via WhatsApp](https://wa.me/{WHATSAPP_NUMBER})")
         st.image("https://img.icons8.com/fluency/100/verified-badge.png")
+
+
+# ============================================================
+# HELP & GUIDE MODULE
+# ============================================================
+elif mode == "🆘 Help & Guide":
+    st.header("🛡️ Vanguard Vault — User Guide")
+    st.markdown(
+        """
+Welcome to **Vanguard Vault**, your personal encryption and secure storage system. 
+Use this guide to understand all features, how to use them safely, and tips for best practices.
+"""
+    )
+
+    # ---------------- 1. Getting Started ----------------
+    with st.expander("1️⃣ Getting Started"):
+        st.markdown("""
+**Registering Your Account**
+- Go to the Register tab.
+- Enter a username, passkey, and accept Terms of Service.
+- Save your recovery code. It cannot be recovered later.
+- You can download the recovery code as a `.txt` file.
+
+**Logging In**
+- Use the Login tab with your username and passkey.
+- Forgot your passkey? Use the Recovery Code to reset it.
+
+**Session Timeout**
+- Inactivity >30 minutes logs you out automatically.
+        """)
+
+    # ---------------- 2. Credits & Paywall ----------------
+    with st.expander("2️⃣ Credits & Usage"):
+        st.markdown("""
+- Each user has a free usage limit (default: 5 operations).
+- If limit is reached, a small fee (₦200) unlocks more operations.
+- Contact support via WhatsApp with proof to refill credits.
+- Admin users have unlimited access.
+        """)
+
+    # ---------------- 3. AES Symmetric Locker ----------------
+    with st.expander("3️⃣ AES Symmetric Locker"):
+        st.markdown("""
+**Purpose:** Encrypt/decrypt text, files, and videos using AES-256.
+
+**Steps:**
+1. **Key Generation**
+   - Generate a random AES key or use your master password.
+   - Always save your AES key — losing it means losing your files.
+
+2. **Encrypt Text**
+   - Enter plaintext → click Encrypt → copy/download ciphertext.
+
+3. **Decrypt Text**
+   - Paste ciphertext → click Decrypt.
+
+4. **File / Video Vault**
+   - Upload a file/video → Encrypt → download `.vanguard` file.
+   - To decrypt, upload `.vanguard` → provide AES key → download original.
+
+**Tips:**  
+- Use the master password consistently for repeatable keys.
+- Avoid very large video files to prevent memory issues.
+        """)
+
+    # ---------------- 4. RSA Hybrid ----------------
+    with st.expander("4️⃣ RSA Hybrid Encryption"):
+        st.markdown("""
+**Purpose:** Share files securely using hybrid AES + RSA encryption.
+
+**Steps:**
+1. **Key Management**
+   - Generate a public/private RSA keypair.
+   - Keep the private key secret; share only the public key.
+
+2. **Encrypt a File**
+   - Paste recipient’s public key.
+   - Upload file → Encrypt → download vault & unlock key → send both to recipient.
+
+3. **Decrypt a File**
+   - Paste your private key & encrypted unlock key.
+   - Upload vault → Decrypt → download original file.
+        """)
+
+    # ---------------- 5. Diffie-Hellman ----------------
+    with st.expander("5️⃣ Diffie-Hellman Key Exchange"):
+        st.markdown("""
+**Purpose:** Establish a shared AES key with another operator without sending the key directly.
+
+**Steps:**
+1. Generate your DH public key → send to partner.
+2. Paste partner’s public key → Calculate shared secret → derived AES key.
+
+**Tip:** Both users must use Vanguard Vault for compatibility.
+        """)
+
+    # ---------------- 6. Hashing ----------------
+    with st.expander("6️⃣ Hashing & Integrity"):
+        st.markdown("""
+**Purpose:** Generate secure hashes to verify data integrity.
+
+**Steps:**
+1. Select a hash algorithm (SHA-256 recommended).
+2. Enter text.
+3. Optional: Enable HMAC with a secret key.
+4. Click Generate → receive hash digest.
+        """)
+
+    # ---------------- 7. Steganography ----------------
+    with st.expander("7️⃣ Steganography"):
+        st.markdown("""
+**Purpose:** Hide encrypted messages in images or videos.
+
+**Hide a Message**
+1. Select media type: Image (PNG) or Video (MP4/AVI).
+2. Enter secret message & password.
+3. Upload cover media → Encrypt & Hide → download stego file.
+
+**Extract a Message**
+1. Select media type & enter password.
+2. Upload stego file → Extract & Decrypt → view hidden message.
+
+**Tips:**  
+- Keep your password safe.
+- Large messages may not fit in small images/videos — app will warn you.
+        """)
+
+    # ---------------- 8. Support & Contact ----------------
+    with st.expander("8️⃣ Support & Contact"):
+        st.markdown(f"""
+- Use the **Support tab** for help with issues.
+- Contact ADELL Tech via WhatsApp: [Click to Chat](https://wa.me/{WHATSAPP_NUMBER})
+- Admins monitor support tickets in the Admin Dashboard.
+        """)
+
+    # ---------------- 9. Security Notes ----------------
+    with st.expander("9️⃣ Security Notes"):
+        st.markdown("""
+- All encryption is **client-side**; keys are never sent to the server.
+- Recovery codes only restore accounts, not encrypted files.
+- Always backup your keys, passwords, and recovery codes.
+        """)
+
+    st.success("✅ You are ready to use Vanguard Vault safely. Follow these steps and explore each module!")
+
 
 
 # ============================================================
