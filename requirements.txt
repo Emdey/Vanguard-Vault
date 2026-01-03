@@ -1,9 +1,32 @@
-streamlit==1.27.0
-numpy==1.26.4
+# =============================
+# CORE & UI
+# =============================
+streamlit==1.26.0
+rich==14.2.0
+pygments==2.19.2
+markdown-it-py==4.0.0
+mdurl==0.1.2
 pandas==2.1.1
+
+# =============================
+# IMAGE & VIDEO PROCESSING
+# =============================
 Pillow==10.0.0
-cryptography==41.0.3
-supabase==1.0.0
+numpy==1.27.0
+opencv-python-headless==4.8.1.78  # headless is required for cloud deployment
 stepic==1.0.1
-pycryptodome==3.19.0
-opencv-python-headless==4.8.1.78
+
+# =============================
+# CRYPTOGRAPHY
+# =============================
+cryptography==41.0.2
+
+# =============================
+# DATABASE
+# =============================
+supabase==2.3.0
+
+# =============================
+# OPTIONAL (if you want extra utils)
+# =============================
+python-dotenv==1.0.0
