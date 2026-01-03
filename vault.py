@@ -79,6 +79,8 @@ FLUTTERWAVE_LINK = "#"  # Replace when live
 # ============================================================
 
 def init_session():
+    if "aes_ciphertext" not in st.session_state:
+        st.session_state.aes_ciphertext = ""
     if "auth" not in st.session_state:
         st.session_state.auth = {"user": None, "login_time": None}
     if "crypto" not in st.session_state:
@@ -184,23 +186,29 @@ def check_usage_limit(user: str) -> bool:
     if usage >= FREE_LIMIT:
         # Safely render paywall
         st.markdown(
-            f"""
-            <div style="
-                padding: 16px; 
-                background: #ffe6e6; 
-                border-radius: 8px; 
-                border: 1px solid #ff4d4f;
-            ">
-                🔒 <b>CREDIT LIMIT REACHED</b><br>
-                Pay <b>₦200</b> to unlock 5 more operations.<br>
-                <code>{BANK_INFO}</code><br>
-                <a href="https://wa.me/{WHATSAPP_NUMBER}?text=Proof:{user}" target="_blank">
-                    📩 Send Proof on WhatsApp
-                </a>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
+    f"""
+    <div style="
+        padding: 16px;
+        background: #120406;
+        border-radius: 8px;
+        border: 1px solid #ff4d4f;
+        box-shadow: 0 0 15px rgba(255, 77, 79, 0.35);
+        color: #ffb3b3;
+        font-family: monospace;
+    ">
+        🔒 <b>CREDIT LIMIT REACHED</b><br>
+        Pay <b>₦200</b> to unlock 5 more operations.<br>
+        <code style="color:#00f2ff;">{BANK_INFO}</code><br><br>
+        <a href="https://wa.me/{WHATSAPP_NUMBER}?text=Proof:{user}"
+           style="color:#00f2ff;font-weight:bold;"
+           target="_blank">
+            📩 Send Proof on WhatsApp
+        </a>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
         return False
 
     return True
@@ -359,6 +367,14 @@ if mode == "AES Symmetric":
             st.write("**Your New AES Key (Save this!):**")
             st.code(new_key)
             st.warning("⚠️ Vanguard does not store this key. If you lose it, your files are gone forever.")
+        
+        if st.session_state.aes_ciphertext:
+            st.write("**Encrypted Message:**")
+            st.code(st.session_state.aes_ciphertext)
+        if st.button("🧹 Clear Cipher Output"):
+           st.session_state.aes_ciphertext = ""
+
+
 
     # ---------------- KEY SELECTION (Shared by all tabs) ----------------
     st.markdown("---")
@@ -397,9 +413,11 @@ if mode == "AES Symmetric":
             with col1:
                 plaintext = st.text_area("Plaintext to Encrypt")
                 if st.button("🔒 Encrypt Text") and plaintext and check_usage_limit(user):
-                    st.write("**Encrypted Message:**")
-                    st.code(fernet.encrypt(plaintext.encode()).decode())
+                    st.session_state.aes_ciphertext = (
+                        fernet.encrypt(plaintext.encode()).decode()
+                        )
                     increment_usage(user, "AES_TEXT_ENC")
+
 
             with col2:
                 ciphertext = st.text_area("Ciphertext to Decrypt")
