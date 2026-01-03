@@ -363,7 +363,7 @@ with st.sidebar:
     st.markdown("---")
 
 st.write("DEBUG: user =", user)
-st.write("DEBUG: menu =", menu)
+st.write("DEBUG: mode =", mode)
 # ============================================================
 # MODULE SELECTION
 
@@ -384,7 +384,7 @@ if user == ADMIN_USERNAME:
 mode = st.selectbox("Module", menu)
 
 # ============================================================
-# AES SYMMETRIC MODULE (Refactored)
+# AES SYMMETRIC MODULE 
 # ============================================================
 if mode == "AES Symmetric":
     st.header("🛡️ AES-256 Symmetric Locker")
