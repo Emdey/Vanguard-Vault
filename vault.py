@@ -362,8 +362,7 @@ with st.sidebar:
         st.warning("🔒 Limit Reached. Top up required.")
     st.markdown("---")
 
-st.write("DEBUG: user =", user)
-st.write("DEBUG: mode =", mode)
+
 # ============================================================
 # MODULE SELECTION
 
