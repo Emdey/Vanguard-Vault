@@ -20,7 +20,12 @@ import hmac
 
 # --- Image / Video ---
 from PIL import Image
-import cv2
+try:
+    import cv2
+    CV2_AVAILABLE = True
+except ModuleNotFoundError:
+    CV2_AVAILABLE = False
+
 import numpy as np
 import stepic  # For image steganography
 
@@ -685,7 +690,7 @@ elif mode == "Hashing":
 
 
 # ============================================================
-# STEGANOGRAPHY MODULE — Slimmed Version
+# STEGANOGRAPHY MODULE
 # ============================================================
 elif mode == "Steganography":
     st.header("🖼️ / 🎬 Steganographic Covert Ops")
@@ -714,38 +719,52 @@ elif mode == "Steganography":
                 fernet = derive_fernet(password)
                 enc_msg = fernet.encrypt(secret_msg.encode())
 
+                # ---------------- IMAGE ----------------
                 if stego_type == "Image (PNG)":
                     img_up = st.file_uploader("Upload Cover Image (PNG)", type=['png'])
                     if img_up:
                         img = Image.open(img_up)
+                        st.image(img, caption="Uploaded Image Preview", use_column_width=True)
                         max_bytes = (img.width * img.height * 3) // 8
                         if len(enc_msg) > max_bytes:
-                            st.error(f"Message too large! Max: {max_bytes} bytes")
-                        else:
-                            buf = io.BytesIO()
-                            stepic.encode(img, enc_msg).save(buf, format="PNG")
-                            st.success("✅ Message Embedded in Image!")
-                            st.download_button("Download Secret PNG", buf.getvalue(), "secret_vanguard.png")
-                            increment_usage(user, "STEGO_HIDE")
+                            st.warning(f"Message too large! Max: {max_bytes} bytes")
+                            trim_ratio = st.slider("Auto-trim message to fit media (%)", 50, 100, 90)
+                            trim_len = int(max_bytes * trim_ratio / 100)
+                            enc_msg = enc_msg[:trim_len]
+                            st.info(f"Message automatically trimmed to {trim_len} bytes to fit the image")
 
-                else:  # Video
-                    video_up = st.file_uploader("Upload Video (MP4/AVI)", type=['mp4','avi'])
-                    if video_up:
-                        tmp_vid = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
-                        tmp_vid.write(video_up.read())
-                        tmp_vid.flush()
+                        buf = io.BytesIO()
+                        stepic.encode(img, enc_msg).save(buf, format="PNG")
+                        st.success("✅ Message Embedded in Image!")
+                        st.download_button("Download Secret PNG", buf.getvalue(), "secret_vanguard.png")
+                        increment_usage(user, "STEGO_HIDE")
 
-                        cap = cv2.VideoCapture(tmp_vid.name)
-                        fps = cap.get(cv2.CAP_PROP_FPS)
-                        width, height = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-                        bits_per_frame = width * height * 3
-                        max_bytes = (bits_per_frame * total_frames) // 8
+                # ---------------- VIDEO ----------------
+                elif stego_type == "Video (MP4/AVI)":
+                    if not CV2_AVAILABLE:
+                        st.error("Video functionality is unavailable. Please contact support.")
+                    else:
+                        video_up = st.file_uploader("Upload Video (MP4/AVI)", type=['mp4','avi'])
+                        if video_up:
+                            tmp_vid = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
+                            tmp_vid.write(video_up.read())
+                            tmp_vid.flush()
 
-                        if len(enc_msg) > max_bytes:
-                            st.error(f"Message too large! Max: {max_bytes} bytes")
-                            cap.release()
-                        else:
+                            cap = cv2.VideoCapture(tmp_vid.name)
+                            fps = cap.get(cv2.CAP_PROP_FPS)
+                            width, height = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                            bits_per_frame = width * height * 3
+                            max_bytes = (bits_per_frame * total_frames) // 8
+
+                            # Auto-trim slider for video messages
+                            if len(enc_msg) > max_bytes:
+                                st.warning(f"Message too large! Max: {max_bytes} bytes")
+                                trim_ratio = st.slider("Auto-trim message to fit video (%)", 50, 100, 90)
+                                trim_len = int(max_bytes * trim_ratio / 100)
+                                enc_msg = enc_msg[:trim_len]
+                                st.info(f"Message automatically trimmed to {trim_len} bytes to fit the video")
+
                             msg_bits = np.unpackbits(np.frombuffer(enc_msg, dtype=np.uint8))
                             bit_idx, frame_counter = 0, 0
                             frames_needed = math.ceil(len(msg_bits) / bits_per_frame)
@@ -769,7 +788,7 @@ elif mode == "Steganography":
                                 progress_bar.progress(min(frame_counter / frames_needed, 1.0))
                                 if bit_idx >= len(msg_bits): break
 
-                            # Remaining frames
+                            # Write remaining frames unchanged
                             while True:
                                 ret, frame = cap.read()
                                 if not ret: break
@@ -779,7 +798,11 @@ elif mode == "Steganography":
                             out.release()
                             progress_bar.empty()
                             st.success("✅ Message Embedded in Video!")
-                            st.download_button("Download Video with Hidden Message", open(out_temp.name,'rb').read(), f"hidden_{video_up.name}")
+                            st.download_button(
+                                "Download Video with Hidden Message",
+                                open(out_temp.name,'rb').read(),
+                                f"hidden_{video_up.name}"
+                            )
                             increment_usage(user, "VIDEO_STEGO_HIDE")
 
             except Exception as e:
@@ -794,6 +817,7 @@ elif mode == "Steganography":
             try:
                 fernet = derive_fernet(extract_pass)
 
+                # ---------------- IMAGE ----------------
                 if stego_type == "Image (PNG)":
                     img_enc = st.file_uploader("Upload Stego Image (PNG)", type=['png'])
                     if img_enc:
@@ -803,34 +827,39 @@ elif mode == "Steganography":
                         st.text_area("Extracted Content", decrypted_msg.decode())
                         increment_usage(user, "STEGO_EXTRACT")
 
-                else:  # Video
-                    video_enc = st.file_uploader("Upload Video with Hidden Message", type=['mp4','avi'])
-                    if video_enc:
-                        tmp_vid = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
-                        tmp_vid.write(video_enc.read())
-                        tmp_vid.flush()
+                # ---------------- VIDEO ----------------
+                elif stego_type == "Video (MP4/AVI)":
+                    if not CV2_AVAILABLE:
+                        st.error("Video functionality is unavailable. Please contact support.")
+                    else:
+                        video_enc = st.file_uploader("Upload Video with Hidden Message", type=['mp4','avi'])
+                        if video_enc:
+                            tmp_vid = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
+                            tmp_vid.write(video_enc.read())
+                            tmp_vid.flush()
 
-                        cap = cv2.VideoCapture(tmp_vid.name)
-                        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-                        bits, frame_counter = [], 0
-                        progress_bar = st.progress(0)
+                            cap = cv2.VideoCapture(tmp_vid.name)
+                            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                            bits, frame_counter = [], 0
+                            progress_bar = st.progress(0)
 
-                        while True:
-                            ret, frame = cap.read()
-                            if not ret: break
-                            bits.extend([val & 1 for val in frame.flatten()])
-                            frame_counter += 1
-                            progress_bar.progress(min(frame_counter / total_frames, 1.0))
+                            while True:
+                                ret, frame = cap.read()
+                                if not ret: break
+                                bits.extend([val & 1 for val in frame.flatten()])
+                                frame_counter += 1
+                                progress_bar.progress(min(frame_counter / total_frames, 1.0))
 
-                        cap.release()
-                        progress_bar.empty()
+                            cap.release()
+                            progress_bar.empty()
 
-                        total_bytes = len(bits) // 8
-                        data = np.packbits(bits[:total_bytes*8]).tobytes()
-                        decrypted_msg = fernet.decrypt(data)
-                        st.success("🔓 Message Extracted from Video!")
-                        st.text_area("Extracted Content", decrypted_msg.decode())
-                        increment_usage(user, "VIDEO_STEGO_EXTRACT")
+                            total_bytes = len(bits) // 8
+                            data = np.packbits(bits[:total_bytes*8]).tobytes()
+                            decrypted_msg = fernet.decrypt(data)
+                            st.success("🔓 Message Extracted from Video!")
+                            st.text_area("Extracted Content", decrypted_msg.decode())
+                            increment_usage(user, "VIDEO_STEGO_EXTRACT")
+
             except Exception as e:
                 st.error(f"Stego Extraction Failed: {e}")
 
