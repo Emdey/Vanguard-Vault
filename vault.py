@@ -357,6 +357,11 @@ with st.sidebar:
         st.warning("🔒 Limit Reached. Top up required.")
     st.markdown("---")
 
+st.write("DEBUG: user =", user)
+st.write("DEBUG: menu =", menu)
+# ============================================================
+# MODULE SELECTION
+
 menu = [
     "AES Symmetric",
     "RSA Hybrid",
@@ -1061,4 +1066,5 @@ elif mode == "👑 ADMIN":
                     st.link_button("💬 Reply on WhatsApp", f"https://wa.me/{WHATSAPP_NUMBER}?text=Hello%20{t['username']},%20re:%20{t['subject']}")
     else:
         st.success("No pending support tickets. Systems optimal.")
+        
 # ============================================================
