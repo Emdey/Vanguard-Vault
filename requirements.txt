@@ -1,9 +1,30 @@
-streamlit
-numpy
-pandas
-Pillow
-cryptography
-stepic
-supabase
-opencv-python-headless
-pycryptodome
+# ============================================================
+# VANGUARD VAULT — DEPLOYMENT REQUIREMENTS
+# ============================================================
+
+# --- Core UI ---
+streamlit>=1.30.0        # Main frontend framework
+flask>=2.3.0             # Backend server for any API endpoints
+
+# --- Data & Utilities ---
+numpy>=1.25.0            # Numerical operations
+pandas>=2.1.0            # Data handling
+
+# --- Image / Video Processing ---
+Pillow>=10.0.0           # Image loading/manipulation
+opencv-python-headless>=4.7.0  # Video processing (headless for cloud)
+stepic>=0.4.0            # Image LSB steganography
+
+# --- Cryptography / Security ---
+cryptography>=41.0.0     # Fernet encryption, KDFs
+pycryptodome>=3.18.0     # Optional cryptographic functions
+bcrypt>=4.0.1             # Password hashing
+reedsolo>=1.6.1           # Reed-Solomon error correction for stego
+
+# --- Backend / Database ---
+supabase>=1.0.0          # Supabase client for database operations
+sqlalchemy>=2.0.0        # ORM for database interactions
+psycopg2-binary>=2.9.0   # PostgreSQL database adapter
+alembic>=1.10.0          # Database migrations
+redis>=4.5.0             # Caching and session management
+rq>=1.11.0               # Task queue for background jobs
