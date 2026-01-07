@@ -788,7 +788,7 @@ elif mode == "Hashing":
 
 
 # ============================================================
-# STEGANOGRAPHY MODULE — COMMERCIAL EDITION
+# STEGANOGRAPHY MODULE — PRO-GRADE COMMERCIAL
 # ============================================================
 # ---------------- Logging Setup ----------------
 LOG_FILE = "stego_activity.log"
@@ -797,6 +797,7 @@ logging.basicConfig(filename=LOG_FILE,
                     format='%(asctime)s | %(user)s | %(action)s | %(media)s | %(message)s')
 
 def log_stego_activity(user, action, media_type, msg_length=None, success=True):
+    """Log stego actions for analytics and commercial auditing."""
     status = "SUCCESS" if success else "FAIL"
     msg_info = f"msg_len={msg_length}" if msg_length else ""
     logging.info(f"{status}", extra={
@@ -835,7 +836,6 @@ def run_stego_hide(user):
 
     if st.button("Encrypt & Hide") and secret_msg and password and check_usage_limit(user):
         try:
-            # Encrypt + RS encode
             fernet = derive_fernet(password, user_salt)
             enc_msg = fernet.encrypt(secret_msg.encode())
             enc_msg_rs = encode_with_rs(enc_msg)
@@ -853,7 +853,6 @@ def run_stego_hide(user):
                         trim_len = int(max_bytes * trim_ratio / 100)
                         enc_msg_rs = enc_msg_rs[:trim_len]
 
-                    # Pseudorandom LSB embedding
                     np.random.seed(int.from_bytes(hashlib.sha256(password.encode()).digest(), 'big'))
                     flat = np.array(img).flatten()
                     msg_bits = np.unpackbits(np.frombuffer(enc_msg_rs, dtype=np.uint8))
@@ -994,7 +993,7 @@ def run_stego_extract(user):
             log_stego_activity(user, "STEGO_EXTRACT", media_type, success=False)
 
 # ---------------- Mode Integration ----------------
-if mode == "Steganography":
+if mode == "Steganography" and user:
     st.header("🕵️‍♂️ Steganography Suite")
     st.info("Hide encrypted messages within images or videos using LSB + Reed-Solomon + Fernet.")
 
@@ -1003,8 +1002,6 @@ if mode == "Steganography":
         run_stego_hide(user)
     with tab_reveal:
         run_stego_extract(user)
-
-
 
 
 
