@@ -375,84 +375,84 @@ if not st.session_state.auth["user"]:
 
     # ---------------- LOGIN ----------------
     with t_login:
-        nu = st.text_input("New Username", key="register_username")
-        np = st.text_input("New Passkey", type="password", key="register_password")
+        login_user = st.text_input("Username", key="login_username")
+        login_pass = st.text_input("Passkey", type="password", key="login_passkey")
 
-        if st.button("Access Vault"):
-            if not rate_limit(nu, "LOGIN"):
+        if st.button("Access Vault", key="btn_login"):
+            if not rate_limit(login_user, "LOGIN"):
                 st.error("Too many attempts.")
                 st.stop()
 
-            user = get_user(nu)
-            if not user or not verify_password(np, user["password"]):
+            user = get_user(login_user)
+            if not user or not verify_password(login_pass, user["password"]):
                 st.error("Invalid credentials.")
             else:
-                st.session_state.auth["user"] = nu
+                st.session_state.auth["user"] = login_user
                 st.session_state.auth["login_time"] = datetime.utcnow()
-                audit(nu, "LOGIN")
+                audit(login_user, "LOGIN")
                 st.rerun()
 
     # ---------------- REGISTER ----------------
     with t_register:
-        nu = st.text_input("New Username")
-        np = st.text_input("New Passkey", type="password")
-        agree = st.checkbox("I accept the Terms of Service")
+        reg_user = st.text_input("New Username", key="register_username")
+        reg_pass = st.text_input("New Passkey", type="password", key="register_passkey")
+        agree = st.checkbox("I accept the Terms of Service", key="register_tos")
 
-        if st.button("Create Identity") and agree:
-            if not rate_limit(nu, "REGISTER", 3, 30):
+        if st.button("Create Identity", key="btn_register") and agree:
+            if not rate_limit(reg_user, "REGISTER", 3, 30):
                 st.error("Too many attempts.")
                 st.stop()
 
-            valid, msg = validate_password_strength(np)
+            valid, msg = validate_password_strength(reg_pass)
             if not valid:
                 st.error(msg)
                 st.stop()
 
-            if get_user(nu):
+            if get_user(reg_user):
                 st.error("Username already exists.")
                 st.stop()
 
             rc = generate_recovery_code()
             DB["users"].append({
-                "username": nu,
-                "password": hash_password(np),
+                "username": reg_user,
+                "password": hash_password(reg_pass),
                 "recovery_hash": hash_recovery_code(rc)
             })
 
             st.success("Account created.")
             st.warning("SAVE THIS RECOVERY CODE")
             st.code(rc)
-            audit(nu, "REGISTER")
+            audit(reg_user, "REGISTER")
 
     # ---------------- RECOVERY ----------------
     with st.expander("🔑 Forgot Passkey?"):
-        ru = st.text_input("Username")
-        rc = st.text_input("Recovery Code")
-        np = st.text_input("New Passkey", type="password")
+        rec_user = st.text_input("Username", key="recovery_username")
+        rec_code = st.text_input("Recovery Code", key="recovery_code")
+        rec_pass = st.text_input("New Passkey", type="password", key="recovery_new_passkey")
 
-        if st.button("Reset Passkey"):
-            if not rate_limit(ru, "RECOVERY", 3, 30):
+        if st.button("Reset Passkey", key="btn_recovery"):
+            if not rate_limit(rec_user, "RECOVERY", 3, 30):
                 st.error("Too many attempts.")
                 st.stop()
 
-            user = get_user(ru)
-            if not user or hash_recovery_code(rc) != user["recovery_hash"]:
+            user = get_user(rec_user)
+            if not user or hash_recovery_code(rec_code) != user["recovery_hash"]:
                 st.error("Invalid recovery details.")
                 st.stop()
 
-            valid, msg = validate_password_strength(np)
+            valid, msg = validate_password_strength(rec_pass)
             if not valid:
                 st.error(msg)
                 st.stop()
 
             new_rc = generate_recovery_code()
-            user["password"] = hash_password(np)
+            user["password"] = hash_password(rec_pass)
             user["recovery_hash"] = hash_recovery_code(new_rc)
 
             st.success("Passkey reset successful.")
             st.warning("SAVE THIS NEW RECOVERY CODE")
             st.code(new_rc)
-            audit(ru, "RECOVERY_RESET")
+            audit(rec_user, "RECOVERY_RESET")
 
     st.stop()  # 🔒 ABSOLUTE BARRIER
 
@@ -464,7 +464,7 @@ require_auth()
 
 st.subheader(f"Welcome, {st.session_state.auth['user']}")
 
-if st.button("Logout"):
+if st.button("Logout", key="btn_logout"):
     audit(st.session_state.auth["user"], "LOGOUT")
     st.session_state.auth = {"user": None, "login_time": None}
     st.rerun()
