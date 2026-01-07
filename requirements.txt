@@ -28,3 +28,4 @@ psycopg2-binary>=2.9.0   # PostgreSQL database adapter
 alembic>=1.10.0          # Database migrations
 redis>=4.5.0             # Caching and session management
 rq>=1.11.0               # Task queue for background jobs
+argon2-cffi>=21.3.0      # Argon2 password hashing
