@@ -21,6 +21,9 @@ from reedsolo import RSCodec
 import random
 import io
 import numpy as np
+from argon2 import PasswordHasher
+import secrets, string
+
 
 
 
@@ -52,6 +55,7 @@ from supabase import create_client, Client
 
 # --- Custom Styling / Utilities ---
 from style import apply_custom_theme, show_status
+
 
 apply_custom_theme()
 show_status()
@@ -290,128 +294,194 @@ def check_usage_limit(user: str) -> bool:
 
 
 # ============================================================
-# AUTH UI (LOGIN / REGISTER / RECOVERY)
+# VANGUARD VAULT — AUTHENTICATION MODULE
+# ============================================================
+
+# ---------------------- CONFIG -----------------------------
+ph = PasswordHasher()
+st.set_page_config(page_title="Vanguard Vault")
+
+# ------------------ SESSION INIT --------------------------
+if "auth" not in st.session_state:
+    st.session_state.auth = {"user": None, "login_time": None}
+
+# ------------------ DATABASE SIMULATION -------------------
+# Replace these with your real database functions
+DB = {"users": []}  # Example in-memory DB
+
+def get_user_by_username(username):
+    for u in DB["users"]:
+        if u["username"] == username:
+            return u
+    return None
+
+def insert_user(username, password_hash, encrypted_rc):
+    DB["users"].append({
+        "username": username,
+        "password": password_hash,
+        "recovery_code": encrypted_rc,
+        "op_count": 0,
+        "payment_count": 0
+    })
+
+def update_user_password(username, new_hash, new_encrypted_rc):
+    user = get_user_by_username(username)
+    if user:
+        user["password"] = new_hash
+        user["recovery_code"] = new_encrypted_rc
+
+# ------------------ RATE LIMIT ----------------------------
+RATE_LIMIT = {}  # {"username_action": [timestamps]}
+
+def rate_limit(user, action, max_attempts=5, window_min=15):
+    key = f"{user}_{action}"
+    now = datetime.utcnow()
+    RATE_LIMIT.setdefault(key, [])
+    # Remove old timestamps
+    RATE_LIMIT[key] = [t for t in RATE_LIMIT[key] if now - t < timedelta(minutes=window_min)]
+    if len(RATE_LIMIT[key]) >= max_attempts:
+        return False
+    RATE_LIMIT[key].append(now)
+    return True
+
+# ------------------ PASSWORD UTILS ------------------------
+def hash_password(password):
+    return ph.hash(password)
+
+def verify_password(password, hash_):
+    try:
+        return ph.verify(hash_, password)
+    except:
+        return False
+
+def validate_password_strength(pw):
+    if len(pw) < 8:
+        return False, "Password must be at least 8 characters."
+    if not any(c.isupper() for c in pw):
+        return False, "Password must contain an uppercase letter."
+    if not any(c.islower() for c in pw):
+        return False, "Password must contain a lowercase letter."
+    if not any(c.isdigit() for c in pw):
+        return False, "Password must contain a number."
+    if not any(c in string.punctuation for c in pw):
+        return False, "Password must contain a special character."
+    return True, ""
+
+def generate_recovery_key(length=12):
+    return "".join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(length))
+
+def encrypt_rc(rc, password):
+    key = Fernet.generate_key()
+    f = Fernet(key)
+    token = f.encrypt(rc.encode())
+    return token  # You could also store key derivation for true zero-knowledge
+
+# ------------------ AUDIT (LOGGING) -----------------------
+def audit(user, action):
+    print(f"[AUDIT] {datetime.utcnow()} - {user} - {action}")
+
+# ============================================================
+# UI LAYOUT
 # ============================================================
 
 if not st.session_state.auth["user"]:
     st.title("🛡️ VANGUARD VAULT")
-
     t1, t2 = st.tabs(["Login", "Register"])
 
     # ------------------ LOGIN ------------------
     with t1:
         u_login = st.text_input("Username", key="login_user")
         p_login = st.text_input("Password", type="password", key="login_pass")
-
         if st.button("Access Vault", key="btn_login"):
-            try:
-                if not rate_limit(u_login, "LOGIN"):
-                    st.error("Too many attempts. Try later.")
-                    st.stop()
-
-                res = conn.table("users").select("*").eq("username", u_login).execute()
-
-                if not res.data:
-                    st.error("Access Denied: Invalid username or password")
-                else:
-                    user_row = res.data[0]
-                    stored_hash = user_row["password"]
-
-                    if verify_password(p_login, stored_hash):
-                        # Lazy migration: SHA-256 → bcrypt
-                        if not stored_hash.startswith("$2"):
-                            new_hash = hash_password(p_login)
-                            conn.table("users").update({"password": new_hash}).eq("username", u_login).execute()
-
-                        st.session_state.auth["user"] = u_login
-                        st.session_state.auth["login_time"] = datetime.utcnow()
-                        audit(u_login, "LOGIN")
-                        st.rerun()
-                    else:
-                        st.error("Access Denied: Invalid username or password")
-            except Exception as e:
-                st.error(f"Login Failed: {e}")
-
-# ------------------ Recovery ------------------
-with st.expander("🔑 Forgot Passkey?"):
-    ru = st.text_input("Username", key="rec_user")
-    rc = st.text_input("Recovery Code", key="rec_code")
-    np = st.text_input("New Passkey", type="password", key="rec_newpass")
-
-    if st.button("Reset Passkey", key="btn_reset"):
-        if not rate_limit(ru, "RECOVERY", max_attempts=3, window_min=30):
-            st.error("Too many recovery attempts. Try again later.")
-            st.stop()
-
-        try:
-            res = conn.table("users") \
-                .select("*") \
-                .eq("username", ru) \
-                .eq("recovery_code", rc) \
-                .execute()
-
-            if res.data:
-                valid, msg = validate_password_strength(np)
-                if not valid:
-                    st.error(msg)
-                    st.stop()
-
-                conn.table("users").update({
-                    "password": hash_password(np)
-                }).eq("username", ru).execute()
-
-                audit(ru, "RECOVERY_RESET")
-                st.success("Passkey reset successful.")
+            if not rate_limit(u_login, "LOGIN"):
+                st.error("Too many login attempts. Try later.")
+                st.stop()
+            user = get_user_by_username(u_login)
+            if not user or not verify_password(p_login, user["password"]):
+                st.error("Invalid username or password.")
             else:
-                st.error("Invalid recovery details.")
-        except Exception as e:
-            st.error(f"Recovery Failed: {e}")
-
+                st.session_state.auth["user"] = u_login
+                st.session_state.auth["login_time"] = datetime.utcnow()
+                audit(u_login, "LOGIN")
+                st.experimental_rerun()
 
     # ------------------ REGISTER ------------------
     with t2:
         nu = st.text_input("New Username", key="reg_user")
         np_reg = st.text_input("New Passkey", type="password", key="reg_pass")
         agree = st.checkbox("I accept the Terms of Service", key="tos_agree")
-
         if st.button("Create Identity", key="btn_register") and agree:
             if not rate_limit(nu, "REGISTER", max_attempts=3, window_min=30):
-                st.error("Too many registration attempts. Please wait 30 minutes.")
+                st.error("Too many registration attempts. Wait 30 minutes.")
                 st.stop()
+            valid, msg = validate_password_strength(np_reg)
+            if not valid:
+                st.error(msg)
+                st.stop()
+            if get_user_by_username(nu):
+                st.error("Username already exists.")
+                st.stop()
+            rc_new = generate_recovery_key()
+            encrypted_rc = encrypt_rc(rc_new, np_reg)
+            insert_user(nu, hash_password(np_reg), encrypted_rc)
+            st.success("Account created.")
+            st.warning("SAVE THIS RECOVERY CODE")
+            st.code(rc_new)
+            st.download_button(
+                "Download Recovery Key",
+                f"USER:{nu}\nRECOVERY:{rc_new}",
+                f"Recovery_{nu}.txt",
+                key=f"dl_rc_{nu}"
+            )
 
-            try:
-                valid, msg = validate_password_strength(np_reg)
+    # ------------------ RECOVERY ------------------
+    with st.expander("🔑 Forgot Passkey?"):
+        ru = st.text_input("Username", key="rec_user")
+        rc = st.text_input("Recovery Code", key="rec_code")
+        np = st.text_input("New Passkey", type="password", key="rec_newpass")
+        if st.button("Reset Passkey", key="btn_reset"):
+            if not rate_limit(ru, "RECOVERY", max_attempts=3, window_min=30):
+                st.error("Too many recovery attempts. Try later.")
+                st.stop()
+            user = get_user_by_username(ru)
+            if user:
+                valid, msg = validate_password_strength(np)
                 if not valid:
                     st.error(msg)
                     st.stop()
+                # Generate new recovery code for zero-knowledge
+                new_rc = generate_recovery_key()
+                new_encrypted_rc = encrypt_rc(new_rc, np)
+                update_user_password(ru, hash_password(np), new_encrypted_rc)
+                audit(ru, "RECOVERY_RESET")
+                st.success("Passkey reset successful. SAVE THIS NEW RECOVERY CODE")
+                st.code(new_rc)
+            else:
+                st.error("Invalid recovery details.")
 
-                # Check for duplicate username
-                existing = conn.table("users").select("*").eq("username", nu).execute()
-                if existing.data:
-                    st.error(f"Username '{nu}' already exists. Choose another.")
-                else:
-                    rc_new = "".join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(12))
-                    conn.table("users").insert({
-                        "username": nu,
-                        "password": hash_password(np_reg),
-                        "recovery_code": rc_new,
-                        "op_count": 0,
-                        "payment_count": 0
-                    }).execute()
-                    st.success("Account created.")
-                    st.warning("SAVE THIS RECOVERY CODE")
-                    st.code(rc_new)
-                    st.download_button(
-                        "Download Recovery Key",
-                        f"USER:{nu}\nRECOVERY:{rc_new}",
-                        f"Recovery_{nu}.txt",
-                        key=f"dl_rc_{nu}"
-                    )
-            except Exception as e:
-                st.error(f"Registration Failed: {e}")
+# ------------------ LOGGED-IN USER ------------------------
+else:
+    st.subheader(f"Welcome, {st.session_state.auth['user']}!")
 
-    st.stop()
-
+    # Change password option
+    st.markdown("### Change Passkey")
+    current_pw = st.text_input("Current Passkey", type="password", key="curr_pw")
+    new_pw = st.text_input("New Passkey", type="password", key="new_pw")
+    if st.button("Update Passkey", key="btn_change_pw"):
+        user = get_user_by_username(st.session_state.auth["user"])
+        if verify_password(current_pw, user["password"]):
+            valid, msg = validate_password_strength(new_pw)
+            if not valid:
+                st.error(msg)
+            else:
+                new_hash = hash_password(new_pw)
+                new_rc = generate_recovery_key()
+                new_enc_rc = encrypt_rc(new_rc, new_pw)
+                update_user_password(user["username"], new_hash, new_enc_rc)
+                st.success("Passkey changed successfully. SAVE THIS NEW RECOVERY CODE")
+                st.code(new_rc)
+        else:
+            st.error("Current passkey incorrect.")
 
 
 # ============================================================
