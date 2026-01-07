@@ -310,7 +310,11 @@ def require_auth():
         st.stop()
 
 # ------------------ DATABASE (SIMULATED) --------------------
-DB = {"users": []}
+if "DB" not in st.session_state:
+    st.session_state.DB = {"users": []}
+
+DB = st.session_state.DB
+
 
 def get_user(username):
     return next((u for u in DB["users"] if u["username"] == username), None)
