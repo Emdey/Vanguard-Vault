@@ -293,7 +293,7 @@ def check_usage_limit(user: str) -> bool:
 
 
 # ============================================================
-# VANGUARD VAULT — AUTHENTICATION MODULE (HARDENED)
+# AUTHENTICATION MODULE 
 # ============================================================
 
 import streamlit as st
@@ -375,21 +375,21 @@ if not st.session_state.auth["user"]:
 
     # ---------------- LOGIN ----------------
     with t_login:
-        u = st.text_input("Username")
-        p = st.text_input("Passkey", type="password")
+        nu = st.text_input("New Username", key="register_username")
+        np = st.text_input("New Passkey", type="password", key="register_password")
 
         if st.button("Access Vault"):
-            if not rate_limit(u, "LOGIN"):
+            if not rate_limit(nu, "LOGIN"):
                 st.error("Too many attempts.")
                 st.stop()
 
-            user = get_user(u)
-            if not user or not verify_password(p, user["password"]):
+            user = get_user(nu)
+            if not user or not verify_password(np, user["password"]):
                 st.error("Invalid credentials.")
             else:
-                st.session_state.auth["user"] = u
+                st.session_state.auth["user"] = nu
                 st.session_state.auth["login_time"] = datetime.utcnow()
-                audit(u, "LOGIN")
+                audit(nu, "LOGIN")
                 st.rerun()
 
     # ---------------- REGISTER ----------------
