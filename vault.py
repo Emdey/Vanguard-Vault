@@ -293,67 +293,60 @@ def check_usage_limit(user: str) -> bool:
 
 
 # ============================================================
-# AUTHENTICATION MODULE 
+# AUTHENTICATION MODULE — FIXED & STABLE
 # ============================================================
 
 import streamlit as st
 import secrets, string, hashlib, bcrypt
 from datetime import datetime, timedelta
 
-# ------------------ PAGE CONFIG ----------------------------
-st.set_page_config(page_title="Vanguard Vault", layout="centered")
-
-# ------------------ SESSION INIT (ZERO TRUST) --------------
+# ------------------ SESSION INIT ----------------------------
 if "auth" not in st.session_state:
-    st.session_state.auth = {
-        "user": None,
-        "login_time": None
-    }
+    st.session_state.auth = {"user": None, "login_time": None}
 
-# ------------------ HARD AUTH GUARD ------------------------
+# ------------------ HARD AUTH GUARD -------------------------
 def require_auth():
-    if not st.session_state.auth.get("user"):
+    if not st.session_state.auth["user"]:
         st.stop()
 
-# ------------------ DATABASE (SIMULATED) -------------------
+# ------------------ DATABASE (SIMULATED) --------------------
 DB = {"users": []}
 
 def get_user(username):
     return next((u for u in DB["users"] if u["username"] == username), None)
 
-# ------------------ PASSWORD SECURITY ----------------------
-def hash_password(password: str) -> str:
-    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+# ------------------ SECURITY --------------------------------
+def hash_password(pw):
+    return bcrypt.hashpw(pw.encode(), bcrypt.gensalt()).decode()
 
-def verify_password(password: str, stored_hash: str) -> bool:
-    return bcrypt.checkpw(password.encode(), stored_hash.encode())
+def verify_password(pw, stored):
+    return bcrypt.checkpw(pw.encode(), stored.encode())
 
-def validate_password_strength(password: str):
-    if len(password) < 12:
-        return False, "Minimum 12 characters required."
-    if not any(c.isupper() for c in password):
-        return False, "Must include uppercase letter."
-    if not any(c.islower() for c in password):
-        return False, "Must include lowercase letter."
-    if not any(c.isdigit() for c in password):
-        return False, "Must include number."
-    if not any(c in string.punctuation for c in password):
-        return False, "Must include special character."
+def validate_password_strength(pw):
+    if len(pw) < 12:
+        return False, "Minimum 12 characters."
+    if not any(c.isupper() for c in pw):
+        return False, "Include uppercase letter."
+    if not any(c.islower() for c in pw):
+        return False, "Include lowercase letter."
+    if not any(c.isdigit() for c in pw):
+        return False, "Include number."
+    if not any(c in string.punctuation for c in pw):
+        return False, "Include special character."
     return True, ""
 
-# ------------------ ZERO-KNOWLEDGE RECOVERY ----------------
-def generate_recovery_code():
+def generate_recovery():
     return "".join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(12))
 
-def hash_recovery_code(rc: str) -> str:
+def hash_recovery(rc):
     return hashlib.sha256(rc.encode()).hexdigest()
 
-# ------------------ RATE LIMIT -----------------------------
+# ------------------ RATE LIMIT -------------------------------
 RATE_LIMIT = {}
 
-def rate_limit(identifier, action, max_attempts=5, window_min=15):
+def rate_limit(user, action, max_attempts=5, window_min=15):
     now = datetime.utcnow()
-    key = f"{identifier}:{action}"
+    key = f"{user}:{action}"
     RATE_LIMIT.setdefault(key, [])
     RATE_LIMIT[key] = [t for t in RATE_LIMIT[key] if now - t < timedelta(minutes=window_min)]
     if len(RATE_LIMIT[key]) >= max_attempts:
@@ -361,24 +354,21 @@ def rate_limit(identifier, action, max_attempts=5, window_min=15):
     RATE_LIMIT[key].append(now)
     return True
 
-# ------------------ AUDIT ----------------------------------
-def audit(user, action):
-    print(f"[AUDIT] {datetime.utcnow().isoformat()} | {user} | {action}")
-
 # ============================================================
 # AUTH UI
 # ============================================================
 
 if not st.session_state.auth["user"]:
     st.title("🛡️ VANGUARD VAULT")
-    t_login, t_register = st.tabs(["Login", "Register"])
+
+    tab_login, tab_register = st.tabs(["Login", "Register"])
 
     # ---------------- LOGIN ----------------
-    with t_login:
-        login_user = st.text_input("Username", key="login_username")
-        login_pass = st.text_input("Passkey", type="password", key="login_passkey")
+    with tab_login:
+        login_user = st.text_input("Username", key="login_user")
+        login_pass = st.text_input("Passkey", type="password", key="login_pass")
 
-        if st.button("Access Vault", key="btn_login"):
+        if st.button("Access Vault", key="login_btn"):
             if not rate_limit(login_user, "LOGIN"):
                 st.error("Too many attempts.")
                 st.stop()
@@ -389,16 +379,15 @@ if not st.session_state.auth["user"]:
             else:
                 st.session_state.auth["user"] = login_user
                 st.session_state.auth["login_time"] = datetime.utcnow()
-                audit(login_user, "LOGIN")
                 st.rerun()
 
     # ---------------- REGISTER ----------------
-    with t_register:
-        reg_user = st.text_input("New Username", key="register_username")
-        reg_pass = st.text_input("New Passkey", type="password", key="register_passkey")
-        agree = st.checkbox("I accept the Terms of Service", key="register_tos")
+    with tab_register:
+        reg_user = st.text_input("New Username", key="reg_user")
+        reg_pass = st.text_input("New Passkey", type="password", key="reg_pass")
+        agree = st.checkbox("I accept the Terms", key="reg_tos")
 
-        if st.button("Create Identity", key="btn_register") and agree:
+        if st.button("Create Identity", key="reg_btn") and agree:
             if not rate_limit(reg_user, "REGISTER", 3, 30):
                 st.error("Too many attempts.")
                 st.stop()
@@ -412,31 +401,26 @@ if not st.session_state.auth["user"]:
                 st.error("Username already exists.")
                 st.stop()
 
-            rc = generate_recovery_code()
+            rc = generate_recovery()
             DB["users"].append({
                 "username": reg_user,
                 "password": hash_password(reg_pass),
-                "recovery_hash": hash_recovery_code(rc)
+                "recovery": hash_recovery(rc)
             })
 
             st.success("Account created.")
             st.warning("SAVE THIS RECOVERY CODE")
             st.code(rc)
-            audit(reg_user, "REGISTER")
 
     # ---------------- RECOVERY ----------------
     with st.expander("🔑 Forgot Passkey?"):
-        rec_user = st.text_input("Username", key="recovery_username")
-        rec_code = st.text_input("Recovery Code", key="recovery_code")
-        rec_pass = st.text_input("New Passkey", type="password", key="recovery_new_passkey")
+        rec_user = st.text_input("Username", key="rec_user")
+        rec_code = st.text_input("Recovery Code", key="rec_code")
+        rec_pass = st.text_input("New Passkey", type="password", key="rec_pass")
 
-        if st.button("Reset Passkey", key="btn_recovery"):
-            if not rate_limit(rec_user, "RECOVERY", 3, 30):
-                st.error("Too many attempts.")
-                st.stop()
-
+        if st.button("Reset Passkey", key="rec_btn"):
             user = get_user(rec_user)
-            if not user or hash_recovery_code(rec_code) != user["recovery_hash"]:
+            if not user or hash_recovery(rec_code) != user["recovery"]:
                 st.error("Invalid recovery details.")
                 st.stop()
 
@@ -445,30 +429,27 @@ if not st.session_state.auth["user"]:
                 st.error(msg)
                 st.stop()
 
-            new_rc = generate_recovery_code()
+            new_rc = generate_recovery()
             user["password"] = hash_password(rec_pass)
-            user["recovery_hash"] = hash_recovery_code(new_rc)
+            user["recovery"] = hash_recovery(new_rc)
 
             st.success("Passkey reset successful.")
             st.warning("SAVE THIS NEW RECOVERY CODE")
             st.code(new_rc)
-            audit(rec_user, "RECOVERY_RESET")
 
-    st.stop()  # 🔒 ABSOLUTE BARRIER
+    st.stop()
 
 # ============================================================
-# AUTHENTICATED AREA (EVERYTHING BELOW IS PROTECTED)
+# AUTHENTICATED AREA
 # ============================================================
 
 require_auth()
 
-st.subheader(f"Welcome, {st.session_state.auth['user']}")
+st.success(f"Welcome, {st.session_state.auth['user']}")
 
-if st.button("Logout", key="btn_logout"):
-    audit(st.session_state.auth["user"], "LOGOUT")
+if st.button("Logout"):
     st.session_state.auth = {"user": None, "login_time": None}
     st.rerun()
-
 
 
 # ============================================================
