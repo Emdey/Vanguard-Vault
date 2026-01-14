@@ -26,7 +26,6 @@ from argon2 import PasswordHasher
 
 
 
-
 # --- Data & Utilities ---
 import pandas as pd
 import hmac
@@ -48,6 +47,9 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa, padding, dh
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
+from cryptography.hazmat.backends import default_backend
+
 
 # --- Database ---
 from supabase import create_client, Client
@@ -124,8 +126,6 @@ def init_session():
         st.session_state.auth = {"user": None, "login_time": None}
     if "crypto" not in st.session_state:
         st.session_state.crypto = {}
-    if "master_key" not in st.session_state:
-        st.session_state.master_key = None
     if "hash_output" not in st.session_state:
         st.session_state.hash_output = ""
 
@@ -145,6 +145,86 @@ def secure_logout():
 
 init_session()
 enforce_session_timeout()
+
+# ============================================================
+# 🔐 VAULT UNLOCK — MASTER KEY MANAGEMENT (PRODUCTION)
+# ============================================================
+
+# ------------------ SESSION STATE ---------------------------
+if "vault" not in st.session_state:
+    st.session_state.vault = {
+        "unlocked": False,
+        "master_key": None,
+        "salt": None,
+        "unlocked_at": None
+    }
+
+# ------------------ KEY DERIVATION --------------------------
+def derive_master_key(password: str, salt: bytes) -> bytes:
+    kdf = Scrypt(
+        salt=salt,
+        length=32,        # 256-bit master key
+        n=2**15,
+        r=8,
+        p=1,
+        backend=default_backend()
+    )
+    return kdf.derive(password.encode())
+
+# ------------------ VAULT UNLOCK UI -------------------------
+def vault_unlock_ui():
+    st.subheader("🔐 Unlock Vault")
+
+    password = st.text_input(
+        "Vault Passphrase",
+        type="password",
+        key="vault_passphrase"
+    )
+
+    if st.button("Unlock Vault", key="vault_unlock_btn"):
+        if len(password) < 12:
+            st.error("Passphrase must be at least 12 characters.")
+            st.stop()
+
+        if not st.session_state.vault["salt"]:
+            st.session_state.vault["salt"] = os.urandom(16)
+
+        try:
+            master_key = derive_master_key(
+                password,
+                st.session_state.vault["salt"]
+            )
+
+            st.session_state.vault["master_key"] = master_key
+            st.session_state.vault["unlocked"] = True
+            st.session_state.vault["unlocked_at"] = datetime.utcnow()
+
+            st.success("Vault unlocked.")
+            st.rerun()
+
+        except Exception:
+            st.error("Failed to unlock vault.")
+
+# ------------------ HARD VAULT GUARD -------------------------
+def require_vault():
+    if not st.session_state.vault["unlocked"]:
+        vault_unlock_ui()
+        st.stop()
+
+# ------------------ MANUAL LOCK -----------------------------
+def lock_vault():
+    st.session_state.vault = {
+        "unlocked": False,
+        "master_key": None,
+        "salt": None,
+        "unlocked_at": None
+    }
+
+if st.sidebar.button("🔒 Lock Vault"):
+    lock_vault()
+    st.warning("Vault locked. Keys wiped from memory.")
+    st.rerun()
+
 
 # ============================================================
 # PASSWORD HASHING & VALIDATION (SECURITY HARDENING)
@@ -296,13 +376,19 @@ def check_usage_limit(user: str) -> bool:
 # VANGUARD VAULT — AUTH MODULE (SUPABASE-PRODUCTION READY)
 # ============================================================
 
-import streamlit as st
-import secrets, string, hashlib, bcrypt
-from datetime import datetime, timedelta
 
 # ------------------ SESSION INIT ----------------------------
 if "auth" not in st.session_state:
     st.session_state.auth = {"user": None, "login_time": None}
+if "vault" not in st.session_state:
+    st.session_state.vault = {
+        "aes_key": None,
+        "rsa_public": None,
+        "rsa_private": None,
+        "hmac_key": None,
+        "dh_shared": None
+    }
+
 
 # ------------------ HARD AUTH GUARD -------------------------
 def require_auth():
@@ -508,37 +594,91 @@ if st.button("Logout"):
     st.session_state.auth = {"user": None, "login_time": None}
     st.rerun()
 
-
-
 # ============================================================
-# MAIN APPLICATION
+# SMART DYNAMIC SIDEBAR — VANGUARD VAULT (FINAL)
 # ============================================================
+
+# --- GUARANTEE VAULT EXISTS (ONCE) ---
+if "vault" not in st.session_state:
+    st.session_state.vault = {
+        "aes_key": None,
+        "rsa_private": None,
+        "rsa_public": None,
+        "dh_shared_key": None,
+        "hmac_key": None
+    }
 
 user = st.session_state.auth["user"]
+vault = st.session_state.vault  # SAFE REFERENCE
 
 with st.sidebar:
     st.title("VANGUARD")
     st.caption(f"Operator: {user}")
-    if st.button("Logout"):
-        secure_logout()
 
-        # --- USAGE MONITOR SECTION ---
+    # --- CRITICAL KEY WARNINGS ---
+    critical_keys = ["aes_key", "rsa_private"]
+    missing = [k for k in critical_keys if not vault[k]]
+
+    if missing:
+        st.warning(
+            "⚠️ Missing critical keys:\n"
+            + ", ".join(missing)
+            + "\nGenerate them before encryption."
+        )
+
+    st.markdown("### 🔐 Crypto Vault Status")
+
+    status_map = {
+        "aes_key": ("AES Key", "Symmetric encryption"),
+        "rsa_private": ("RSA Private Key", "Hybrid decryption"),
+        "rsa_public": ("RSA Public Key", "Hybrid encryption"),
+        "dh_shared_key": ("DH Shared Key", "Ephemeral session key"),
+        "hmac_key": ("HMAC Key", "Integrity verification")
+    }
+
+    keys_exist = False
+
+    for key, (label, desc) in status_map.items():
+        present = vault[key] is not None
+        keys_exist |= present
+        color = "#00ffcc" if present else "#ff4d4f"
+        state = "Loaded" if present else "Missing"
+
+        st.markdown(
+            f"**{label}:** <span style='color:{color}'>{state}</span>",
+            unsafe_allow_html=True
+        )
+        st.caption(desc)
+
+    # --- CLEAR VAULT (ONLY WHEN NEEDED) ---
+    if keys_exist:
+        st.markdown("---")
+        confirm = st.checkbox("⚠️ Confirm: clear all crypto keys", key="confirm_clear_keys")
+
+        if st.button("🧹 Clear All Crypto Keys"):
+            if confirm:
+                for k in vault:
+                    vault[k] = None
+                st.success("Cryptographic vault cleared.")
+                st.rerun()
+            else:
+                st.warning("Confirmation required.")
+
+    # --- USAGE MONITOR ---
     st.markdown("---")
-    st.subheader("📊 Operation Monitor")
-    
-    # Fetch real-time usage from your DB
+    st.subheader("📊 Usage Monitor")
+
     current_usage = get_usage(user)
-    max_limit = FREE_LIMIT 
-    
-    st.metric(label="Credits Used", value=f"{current_usage} / {max_limit}")
-    
-    # Progress bar visualization
-    progress_val = min(current_usage / max_limit, 1.0)
-    st.progress(progress_val)
-    
-    if current_usage >= max_limit:
-        st.warning("🔒 Limit Reached. Top up required.")
+    st.metric("Credits Used", f"{current_usage} / {FREE_LIMIT}")
+    st.progress(min(current_usage / FREE_LIMIT, 1.0))
+
+    if current_usage >= FREE_LIMIT:
+        st.warning("🔒 Usage limit reached.")
+
+    # --- LOGOUT ---
     st.markdown("---")
+    if st.button("🚪 Logout"):
+        secure_logout()
 
 
 # ============================================================
@@ -548,7 +688,7 @@ menu = [
     "AES Symmetric",
     "RSA Hybrid",
     "Diffie-Hellman",
-    "Hashing",
+    "Hashing and Integrity",
     "Steganography",
     "📡 Support",
     "ℹ️ About",
@@ -561,28 +701,66 @@ if user == ADMIN_USERNAME:
 mode = st.selectbox("Module", menu)
 
 # ============================================================
-# AES SYMMETRIC MODULE 
+# AES SYMMETRIC MODULE
 # ============================================================
 if mode == "AES Symmetric":
     st.header("🛡️ AES-256 Symmetric Locker")
     tab_keygen, tab_text, tab_file = st.tabs(["🔑 KEYGEN", "📝 Text Locker", "🎬 File/Video Vault"])
 
-    # ---------------- 1. KEY GENERATION ----------------
+    # ---------------- 1. AES KEY GENERATION ----------------
+    require_vault()
+
+    # Initialize AES key state
+    if "aes_key" not in st.session_state:
+        st.session_state.aes_key = None
+    if "aes_key_size" not in st.session_state:
+        st.session_state.aes_key_size = 256  # default
+
     with tab_keygen:
-        st.subheader("Generate a Strong AES-256 Key")
-        st.info("This generates a random 32-byte key. Never store it in plain text elsewhere.")
-        
-        if st.button("Generate New Random Key"):
-            new_key = Fernet.generate_key().decode()
-            st.write("**Your New AES Key (Save this!):**")
-            st.code(new_key)
-            st.warning("⚠️ Vanguard does not store this key. If you lose it, your files are gone forever.")
-        
-        if st.session_state.aes_ciphertext:
-            st.write("**Encrypted Message:**")
-            st.code(st.session_state.aes_ciphertext)
-        if st.button("🧹 Clear Cipher Output"):
-            st.session_state.aes_ciphertext = ""
+        st.subheader("🔐 AES Symmetric Key Generator")
+
+        # Key size selector
+        st.session_state.aes_key_size = st.selectbox(
+            "Select AES Key Size (bits)",
+            options=[128, 192, 256],
+            index=[128, 192, 256].index(st.session_state.aes_key_size)
+        )
+
+        # Function to generate AES key
+        def generate_aes_key():
+            key_size_bytes = st.session_state.aes_key_size // 8
+            return base64.urlsafe_b64encode(os.urandom(key_size_bytes)).decode()
+
+        # Generate new AES key
+        if st.button("Generate New AES Key"):
+            st.session_state.vault["aes_key"] = generate_aes_key()
+            st.session_state.aes_key = st.session_state.vault["aes_key"]
+            st.success(f"✅ AES-{st.session_state.aes_key_size} key generated!")
+
+        # Display current AES key if exists
+        if st.session_state.vault.get("aes_key"):
+            st.markdown("**Current AES Key:**")
+            st.code(st.session_state.vault["aes_key"])
+
+            # Clear AES key button
+            if st.button("Clear AES Key"):
+                st.session_state.vault["aes_key"] = None
+                st.session_state.aes_key = None
+                st.success("AES key cleared.")
+
+        # Manual AES key input
+    manual_key_input = st.text_input("Or Paste Your Own AES Key (Base64)", key="manual_aes_key")
+    if st.button("Set Manual AES Key") and manual_key_input:
+        try:
+            decoded_key = base64.urlsafe_b64decode(manual_key_input.encode())
+            if len(decoded_key) not in [16, 24, 32]:
+                st.error("Invalid AES key length. Must be 16, 24, or 32 bytes.")
+            else:
+                st.session_state.vault["aes_key"] = manual_key_input
+                st.session_state.aes_key = manual_key_input
+                st.success("✅ Manual AES Key Set!")
+        except Exception as e:
+            st.error(f"Invalid Base64 key format: {e}")
 
     # ---------------- 2. KEY SELECTION ----------------
     st.markdown("---")
@@ -597,7 +775,7 @@ if mode == "AES Symmetric":
             derived = base64.urlsafe_b64encode(kdf.derive(m_pass.encode()))
             fernet = Fernet(derived)
     else:
-        manual_key = st.text_input("Paste Manual AES Key", type="password", help="Enter your 32-byte Base64 key here.")
+        manual_key = st.text_input("Paste Manual AES Key", type="password", help="Enter your Base64 key here.")
         if manual_key:
             try:
                 fernet = Fernet(manual_key.encode())
@@ -627,13 +805,11 @@ if mode == "AES Symmetric":
         else:
             st.info("Provide a password or AES key above to use the text locker.")
 
-# ---------------- 4. FILE/VIDEO VAULT ----------------
+    # ---------------- 4. FILE/VIDEO VAULT ----------------
     with tab_file:
         if fernet:
             file_upload = st.file_uploader("Upload File/Video")
-
             if file_upload:
-                # File size guard
                 if file_upload.size > MAX_AES_FILE_MB * 1024 * 1024:
                     st.error(f"File too large. Maximum allowed is {MAX_AES_FILE_MB} MB.")
                     st.stop()
@@ -647,11 +823,414 @@ if mode == "AES Symmetric":
                     )
                     increment_usage(user, "AES_FILE_ENC")
 
-            vault_upload = st.file_uploader(
-                "Upload .vanguard Vault to Unlock",
-                type=["vanguard"]
-            )
+            vault_upload = st.file_uploader("Upload .vanguard Vault to Unlock", type=["vanguard"])
+            if vault_upload and st.button("🔓 Decrypt Vault") and check_usage_limit(user):
+                try:
+                    dec_data = fernet.decrypt(vault_upload.read())
+                    st.success("Vault Unlocked!")
+                    st.download_button("📥 Download Original File", dec_data, "restored_file")
+                    increment_usage(user, "AES_FILE_DEC")
+                except:
+                    st.error("Decryption Failed: Invalid Key or Corrupt Data")
+        else:
+            st.info("Provide a password or AES key above to use the file vault.")
 
+
+
+
+# ============================================================
+# RSA–AES HYBRID MODULE (FINALIZED)
+# ============================================================
+
+elif mode == "RSA Hybrid":
+    require_vault()
+
+    st.header("🔐 RSA–AES Hybrid Encryption System")
+
+    tab_keys, tab_encrypt, tab_decrypt = st.tabs(
+        ["🔑 Key Management", "🔒 Encrypt File", "🔓 Decrypt File"]
+    )
+
+    # --------------------------------------------------------
+    # 1. KEY MANAGEMENT
+    # --------------------------------------------------------
+    with tab_keys:
+        st.subheader("RSA Keypair")
+
+        # Display status
+        has_private = st.session_state.vault["rsa_private"] is not None
+        has_public = st.session_state.vault["rsa_public"] is not None
+
+        st.markdown(
+            f"""
+            **Private Key:** {"Loaded" if has_private else "Missing"}  
+            **Public Key:** {"Loaded" if has_public else "Missing"}
+            """
+        )
+
+        # Generate RSA keys (ONLY if missing)
+        if not has_private and not has_public:
+            if st.button("Generate RSA Keypair (4096-bit)") and check_usage_limit(user):
+                if not rate_limit(user, "RSA_KEYGEN", max_attempts=3, window_min=15):
+                    st.error("RSA generation rate-limited. Try later.")
+                    st.stop()
+
+                try:
+                    private_key = rsa.generate_private_key(
+                        public_exponent=65537,
+                        key_size=4096
+                    )
+
+                    public_key = private_key.public_key()
+
+                    st.session_state.vault["rsa_private"] = private_key
+                    st.session_state.vault["rsa_public"] = public_key
+
+                    st.success("✅ RSA-4096 keypair generated.")
+                    increment_usage(user, "RSA_KEYGEN_4096")
+                    st.rerun()
+
+                except Exception as e:
+                    st.error(f"RSA generation failed: {e}")
+
+        else:
+            st.info("RSA keypair already loaded. Clear vault to regenerate.")
+
+    # --------------------------------------------------------
+    # 2. HYBRID ENCRYPTION
+    # --------------------------------------------------------
+    with tab_encrypt:
+        st.subheader("Encrypt File (AES + RSA)")
+
+        if not st.session_state.vault["rsa_public"]:
+            st.warning("RSA public key required.")
+            st.stop()
+
+        file = st.file_uploader("Select file to encrypt")
+
+        if file:
+            if file.size > MAX_AES_FILE_MB * 1024 * 1024:
+                st.error(f"File exceeds {MAX_AES_FILE_MB} MB limit.")
+                st.stop()
+
+            if st.button("🔒 Encrypt File") and check_usage_limit(user):
+                try:
+                    # Generate AES session key
+                    session_key = Fernet.generate_key()
+                    fernet = Fernet(session_key)
+
+                    encrypted_payload = fernet.encrypt(file.read())
+
+                    # Encrypt AES key with RSA
+                    rsa_pub = st.session_state.vault["rsa_public"]
+                    encrypted_key = rsa_pub.encrypt(
+                        session_key,
+                        padding.OAEP(
+                            mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                            algorithm=hashes.SHA256(),
+                            label=None
+                        )
+                    )
+
+                    st.success("✅ File encrypted successfully.")
+
+                    st.markdown("**Encrypted Session Key (Send with file)**")
+                    st.code(base64.b64encode(encrypted_key).decode())
+
+                    st.download_button(
+                        "📥 Download Encrypted File",
+                        encrypted_payload,
+                        file.name + ".vault"
+                    )
+
+                    increment_usage(user, "RSA_HYBRID_ENC")
+
+                except Exception as e:
+                    st.error(f"Encryption failed: {e}")
+
+    # --------------------------------------------------------
+    # 3. HYBRID DECRYPTION
+    # --------------------------------------------------------
+    with tab_decrypt:
+        st.subheader("Decrypt Hybrid Vault")
+
+        if not st.session_state.vault["rsa_private"]:
+            st.warning("RSA private key required.")
+            st.stop()
+
+        enc_key_input = st.text_area("Encrypted Session Key (Base64)")
+        vault_file = st.file_uploader("Upload .vault file", type=["vault"])
+
+        if enc_key_input and vault_file:
+            if st.button("🔓 Decrypt File") and check_usage_limit(user):
+                try:
+                    rsa_priv = st.session_state.vault["rsa_private"]
+
+                    session_key = rsa_priv.decrypt(
+                        base64.b64decode(enc_key_input),
+                        padding.OAEP(
+                            mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                            algorithm=hashes.SHA256(),
+                            label=None
+                        )
+                    )
+
+                    fernet = Fernet(session_key)
+                    decrypted_data = fernet.decrypt(vault_file.read())
+
+                    st.success("🔓 Decryption successful.")
+
+                    st.download_button(
+                        "📥 Download Restored File",
+                        decrypted_data,
+                        "restored_file"
+                    )
+
+                    increment_usage(user, "RSA_HYBRID_DEC")
+
+                except Exception as e:
+                    st.error("Decryption failed. Check key and file integrity.")
+
+
+# ============================================================
+# HASHING & INTEGRITY MODULE (GENERATION + VERIFICATION)
+# ============================================================
+elif mode == "Hashing & Integrity":
+    st.header("🧾 Hashing & Integrity Verification")
+
+    tab_text, tab_file = st.tabs(["📝 Text", "📂 File"])
+
+    # ---------------- OPERATION MODE ----------------
+    operation = st.radio(
+        "Operation Type",
+        ["Generate Digest", "Verify Digest"],
+        horizontal=True
+    )
+
+    integrity_type = st.radio(
+        "Integrity Method",
+        ["Standard Hash", "HMAC"],
+        horizontal=True
+    )
+
+    # ---------------- ALGORITHM SELECTION ----------------
+    if integrity_type == "Standard Hash":
+        algo = st.selectbox("Algorithm", ["SHA-256", "SHA-512", "BLAKE2b"])
+    else:
+        algo = st.selectbox("Algorithm", ["HMAC-SHA256", "HMAC-SHA512"])
+
+        if not st.session_state.vault.get("hmac_key"):
+            st.warning("⚠️ HMAC requires a secret key stored in the vault.")
+            st.stop()
+
+    # ---------------- BACKEND ----------------
+    def compute_hash(data: bytes) -> str:
+        if algo == "SHA-256":
+            return hashlib.sha256(data).hexdigest()
+        if algo == "SHA-512":
+            return hashlib.sha512(data).hexdigest()
+        if algo == "BLAKE2b":
+            return hashlib.blake2b(data).hexdigest()
+
+    def compute_hmac(data: bytes) -> str:
+        key = st.session_state.vault["hmac_key"]
+        if algo == "HMAC-SHA256":
+            return hmac.new(key, data, hashlib.sha256).hexdigest()
+        if algo == "HMAC-SHA512":
+            return hmac.new(key, data, hashlib.sha512).hexdigest()
+
+    # ---------------- TEXT MODE ----------------
+    with tab_text:
+        text_input = st.text_area("Input Text")
+
+        expected = None
+        if operation == "Verify Digest":
+            expected = st.text_input("Expected Digest (hex)")
+
+        if st.button("Execute") and text_input and check_usage_limit(user):
+            data = text_input.encode()
+
+            try:
+                actual = (
+                    compute_hash(data)
+                    if integrity_type == "Standard Hash"
+                    else compute_hmac(data)
+                )
+
+                if operation == "Generate Digest":
+                    st.success("Digest generated")
+                    st.code(actual)
+                    increment_usage(user, f"{integrity_type}_GEN_{algo}")
+
+                else:
+                    if hmac.compare_digest(actual, expected.strip()):
+                        st.success("✅ Digest VERIFIED — Integrity OK")
+                    else:
+                        st.error("❌ Digest MISMATCH — Data altered or wrong key")
+
+                    increment_usage(user, f"{integrity_type}_VERIFY_{algo}")
+
+            except Exception as e:
+                st.error(f"Operation failed: {e}")
+
+    # ---------------- FILE MODE ----------------
+    with tab_file:
+        file = st.file_uploader("Upload File")
+
+        expected = None
+        if operation == "Verify Digest":
+            expected = st.text_input("Expected Digest (hex)", key="file_digest")
+
+        if file and st.button("Execute File Operation") and check_usage_limit(user):
+            try:
+                data = file.read()
+
+                actual = (
+                    compute_hash(data)
+                    if integrity_type == "Standard Hash"
+                    else compute_hmac(data)
+                )
+
+                if operation == "Generate Digest":
+                    st.success("Digest generated")
+                    st.code(actual)
+                    increment_usage(user, f"{integrity_type}_FILE_GEN_{algo}")
+
+                else:
+                    if hmac.compare_digest(actual, expected.strip()):
+                        st.success("✅ File VERIFIED — Integrity OK")
+                    else:
+                        st.error("❌ File FAILED verification")
+
+                    increment_usage(user, f"{integrity_type}_FILE_VERIFY_{algo}")
+
+            except Exception as e:
+                st.error(f"Operation failed: {e}")
+
+
+# ============================================================
+# DIFFIE–HELLMAN KEY EXCHANGE MODULE (WITH FILE/VIDEO SUPPORT)
+# ============================================================
+
+elif mode == "Diffie-Hellman":
+    require_vault()
+
+    st.header("🔁 Diffie–Hellman Secure Key Exchange")
+
+    tab_exchange, tab_text, tab_file = st.tabs(
+        ["🔑 Key Exchange", "📝 Text Locker", "🎬 File/Video Vault"]
+    )
+
+    # --------------------------------------------------------
+    # 1. KEY EXCHANGE
+    # --------------------------------------------------------
+    with tab_exchange:
+        st.subheader("Establish Shared Secret")
+
+        if "dh_session_key" not in st.session_state:
+            st.session_state.dh_session_key = None
+
+        if st.session_state.dh_session_key:
+            st.success("✅ DH session key already established.")
+            st.info("You can clear the key to re-initiate exchange.")
+
+        if st.button("Initiate DH Exchange") and check_usage_limit(user):
+            try:
+                parameters = dh.generate_parameters(generator=2, key_size=2048)
+                private_key = parameters.generate_private_key()
+                public_key = private_key.public_key()
+
+                peer_public_input = st.text_area(
+                    "Paste Peer Public Key (PEM)",
+                    help="Exchange this with the other party securely."
+                )
+
+                pub_pem = public_key.public_bytes(
+                    encoding=serialization.Encoding.PEM,
+                    format=serialization.PublicFormat.SubjectPublicKeyInfo
+                ).decode()
+                st.markdown("**Your Public Key (Share this)**")
+                st.code(pub_pem)
+
+                if peer_public_input:
+                    peer_public = serialization.load_pem_public_key(
+                        peer_public_input.encode()
+                    )
+
+                    shared_secret = private_key.exchange(peer_public)
+                    derived_key = HKDF(
+                        algorithm=hashes.SHA256(),
+                        length=32,
+                        salt=None,
+                        info=b"vanguard-dh-session",
+                    ).derive(shared_secret)
+
+                    st.session_state.dh_session_key = base64.urlsafe_b64encode(
+                        derived_key
+                    ).decode()
+
+                    st.success("🔐 Shared DH session key established.")
+                    increment_usage(user, "DH_EXCHANGE")
+                    st.experimental_rerun()
+
+            except Exception as e:
+                st.error(f"Key exchange failed: {e}")
+
+        if st.button("Clear DH Session Key") and st.session_state.dh_session_key:
+            st.session_state.dh_session_key = None
+            st.warning("DH session key cleared.")
+
+    # --------------------------------------------------------
+    # 2. TEXT LOCKER
+    # --------------------------------------------------------
+    with tab_text:
+        if not st.session_state.dh_session_key:
+            st.info("Establish a DH session key above to use the text locker.")
+        else:
+            fernet = Fernet(st.session_state.dh_session_key.encode())
+            col1, col2 = st.columns(2)
+
+            with col1:
+                plaintext = st.text_area("Plaintext to Encrypt")
+                if st.button("🔒 Encrypt Text") and plaintext and check_usage_limit(user):
+                    st.session_state.dh_ciphertext = fernet.encrypt(plaintext.encode()).decode()
+                    st.code(st.session_state.dh_ciphertext)
+                    increment_usage(user, "DH_TEXT_ENC")
+
+            with col2:
+                ciphertext = st.text_area("Ciphertext to Decrypt")
+                if st.button("🔓 Decrypt Text") and ciphertext:
+                    try:
+                        decrypted = fernet.decrypt(ciphertext.encode()).decode()
+                        st.success("Decryption Successful!")
+                        st.write(decrypted)
+                        increment_usage(user, "DH_TEXT_DEC")
+                    except:
+                        st.error("Decryption Failed: Invalid Key or Corrupt Data")
+
+    # --------------------------------------------------------
+    # 3. FILE/VIDEO VAULT
+    # --------------------------------------------------------
+    with tab_file:
+        if not st.session_state.dh_session_key:
+            st.info("Establish a DH session key above to use the file/video vault.")
+        else:
+            fernet = Fernet(st.session_state.dh_session_key.encode())
+
+            file_upload = st.file_uploader("Upload File/Video to Encrypt")
+            if file_upload:
+                if file_upload.size > MAX_AES_FILE_MB * 1024 * 1024:
+                    st.error(f"File too large. Maximum allowed is {MAX_AES_FILE_MB} MB.")
+                elif st.button("📦 Execute File Lock") and check_usage_limit(user):
+                    enc_data = fernet.encrypt(file_upload.read())
+                    st.download_button(
+                        f"📥 Download {file_upload.name}.vault",
+                        enc_data,
+                        f"{file_upload.name}.vault"
+                    )
+                    increment_usage(user, "DH_FILE_ENC")
+
+            vault_upload = st.file_uploader("Upload .vault File to Decrypt", type=["vault"])
             if vault_upload and st.button("🔓 Decrypt Vault") and check_usage_limit(user):
                 try:
                     dec_data = fernet.decrypt(vault_upload.read())
@@ -661,230 +1240,15 @@ if mode == "AES Symmetric":
                         dec_data,
                         "restored_file"
                     )
-                    increment_usage(user, "AES_FILE_DEC")
+                    increment_usage(user, "DH_FILE_DEC")
                 except:
                     st.error("Decryption Failed: Invalid Key or Corrupt Data")
-        else:
-            st.info("Provide a password or AES key above to use the file vault.")
 
 
-
-# ============================================================
-# RSA HYBRID MODULE 
-# ============================================================
-
-elif mode == "RSA Hybrid":
-    st.header("🔐 RSA-AES Hybrid System")
-    tab_keys, tab_encrypt, tab_decrypt = st.tabs(["🔑 Key Management", "🔒 Encrypt", "🔓 Decrypt"])
-
-    # ---------------- Key Generation ----------------
-    with tab_keys:
-        st.subheader("Generate Asymmetric Key Pair")
-        k_size = st.select_slider("Select Bit Strength", options=[2048, 4096], value=2048)
-
-        if st.button("Generate RSA Keypair") and check_usage_limit(user):
-            if not rate_limit(st.session_state.auth["user"], "RSA_KEYGEN", max_attempts=5, window_min=10):
-                st.error("RSA key generation temporarily limited. Please wait.")
-                st.stop()
-
-            try:
-                priv = rsa.generate_private_key(public_exponent=65537, key_size=k_size)
-
-                pem_pub = priv.public_key().public_bytes(
-                    encoding=serialization.Encoding.PEM,
-                    format=serialization.PublicFormat.SubjectPublicKeyInfo
-                ).decode()
-
-                pem_priv = priv.private_bytes(
-                    encoding=serialization.Encoding.PEM,
-                    format=serialization.PrivateFormat.PKCS8,
-                    encryption_algorithm=serialization.NoEncryption()
-                ).decode()
-
-                st.write("📤 **Public Key (Share This)**")
-                st.code(pem_pub)
-                st.write("🔑 **Private Key (KEEP SECRET)**")
-                st.code(pem_priv)
-                st.success(f"✅ {k_size}-bit Keypair Generated!")
-
-                increment_usage(user, f"RSA_KEYGEN_{k_size}")
-            except Exception as e:
-                st.error(f"RSA Key Generation Failed: {e}")
-
-    # ---------------- Hybrid Encryption ----------------
-    with tab_encrypt:
-        pub_key_input = st.text_area("Recipient Public Key (PEM format)")
-        file_upload = st.file_uploader("Select File to Encrypt", key="rsa_enc_file")
-
-        if file_upload:
-            # Enforce file size limit for RSA hybrid
-            if file_upload.size > MAX_AES_FILE_MB * 1024 * 1024:
-                st.error(f"File too large. Maximum allowed is {MAX_AES_FILE_MB} MB.")
-            elif pub_key_input and st.button("Execute Hybrid Lock") and check_usage_limit(user):
-                try:
-                    s_key = Fernet.generate_key()
-                    enc_file_content = Fernet(s_key).encrypt(file_upload.read())
-                    recipient_pub = serialization.load_pem_public_key(pub_key_input.encode())
-                    enc_s_key = recipient_pub.encrypt(
-                        s_key,
-                        padding.OAEP(
-                            mgf=padding.MGF1(algorithm=hashes.SHA256()),
-                            algorithm=hashes.SHA256(),
-                            label=None
-                        )
-                    )
-                    st.success("✅ Vault Created!")
-                    st.write("**Recipient Unlock Key (Send with file):**")
-                    st.code(base64.b64encode(enc_s_key).decode())
-                    st.download_button("Download .vault File", enc_file_content, f"{file_upload.name}.vault")
-                    increment_usage(user, "RSA_HYBRID_ENC")
-                except Exception as e:
-                    st.error(f"Encryption Error: {e}")
-
-    # ---------------- Hybrid Decryption ----------------
-    with tab_decrypt:
-        priv_key_input = st.text_area("Your Private Key (PEM format)")
-        unlock_key_input = st.text_area("Encrypted Unlock Key (Base64)")
-        vault_file = st.file_uploader("Upload .vault File", key="rsa_dec_file")
-
-        if vault_file and priv_key_input and unlock_key_input and st.button("🔓 Decrypt & Extract") and check_usage_limit(user):
-            try:
-                priv = serialization.load_pem_private_key(priv_key_input.encode(), password=None)
-                s_key = priv.decrypt(
-                    base64.b64decode(unlock_key_input.encode()),
-                    padding.OAEP(
-                        mgf=padding.MGF1(algorithm=hashes.SHA256()),
-                        algorithm=hashes.SHA256(),
-                        label=None
-                    )
-                )
-                decrypted_content = Fernet(s_key).decrypt(vault_file.read())
-                st.success("🔓 Decryption Successful!")
-                st.download_button("Download Decrypted File", decrypted_content, "restored_file")
-
-                increment_usage(user, "RSA_HYBRID_DEC")
-            except Exception as e:
-                st.error(f"Decryption Failed: {e}. Check keys and file.")
-
-# ============================================================
-# DIFFIE-HELLMAN MODULE 
-# ============================================================
-elif mode == "Diffie-Hellman":
-    st.header("🤝 Diffie-Hellman Key Exchange")
-    st.info("Establish a shared 256-bit AES key with another operator without sending the key itself.")
-
-    # Initialize DH parameters once per session
-    if "dh_params" not in st.session_state:
-        with st.spinner("Initializing Secure DH Group..."):
-            st.session_state.dh_params = dh.generate_parameters(generator=2, key_size=2048)
-
-    params = st.session_state.dh_params
-    tab_gen, tab_secret = st.tabs(["1️⃣ Generate My Key", "2️⃣ Compute Shared Secret"])
-
-    # ---------------- Generate DH Key ----------------
-    with tab_gen:
-        st.subheader("Step 1: Generate Your Public Key")
-        if st.button("Generate My DH Public Key") and check_usage_limit(user):
-            if not rate_limit(st.session_state.auth["user"], "DH_PUBKEY_GEN", max_attempts=5, window_min=10):
-                st.error("Too many DH key generations. Try later.")
-                st.stop()
-
-            try:
-                priv = params.generate_private_key()
-                st.session_state.dh_priv = priv
-                pub = priv.public_key().public_bytes(
-                    serialization.Encoding.PEM,
-                    serialization.PublicFormat.SubjectPublicKeyInfo
-                ).decode()
-                st.session_state.dh_pub = pub
-                st.success("✅ Your key component is ready!")
-                st.write("**Send this to your partner:**")
-                st.code(pub)
-                increment_usage(user, "DH_PUBKEY_GEN")
-            except Exception as e:
-                st.error(f"DH Key Generation Failed: {e}")
-
-    # ---------------- Compute Shared Secret ----------------
-    with tab_secret:
-        st.subheader("Step 2: Compute Shared Secret")
-        partner_pub_input = st.text_area("Paste Partner's Public Key (PEM)")
-
-        if st.button("Calculate Shared Secret") and partner_pub_input and check_usage_limit(user):
-            if not rate_limit(st.session_state.auth["user"], "DH_SECRET_DERIVE", max_attempts=5, window_min=10):
-                st.error("Too many shared secret derivations. Try later.")
-                st.stop()
-
-            if "dh_priv" not in st.session_state:
-                st.error("❌ Generate your own key in Tab 1 first.")
-            else:
-                try:
-                    partner_pub = serialization.load_pem_public_key(partner_pub_input.encode())
-                    shared_raw = st.session_state.dh_priv.exchange(partner_pub)
-                    derived_key = HKDF(
-                        algorithm=hashes.SHA256(),
-                        length=32,
-                        salt=None,
-                        info=b'vanguard-dh-handshake'
-                    ).derive(shared_raw)
-                    st.session_state.dh_shared_key = base64.urlsafe_b64encode(derived_key).decode()
-                    st.success("🤝 Shared Secret Established!")
-                    st.write("**Derived AES Key (256-bit):**")
-                    st.code(st.session_state.dh_shared_key)
-                    st.warning("Both you and your partner will now see the same key.")
-                    increment_usage(user, "DH_SECRET_DERIVE")
-                    # Clear ephemeral private key after computation for safety
-                    del st.session_state.dh_priv
-                except Exception as e:
-                    st.error(f"Handshake Failed: {e}")
-                    st.info("Ensure your partner used a Vanguard Vault public key.")
 
 
 # ============================================================
-# HASHING MODULE
-# ============================================================
-elif mode == "Hashing":
-    st.header("🔐 Secure Hash Generator")
-    algo = st.selectbox(
-        "Algorithm",
-        ["SHA-256 (Recommended)", "SHA-512", "MD5 (Weak, Legacy Only)"]
-    )
-    inp = st.text_area("Input Text")
-    use_hmac = st.checkbox("Use HMAC (Keyed Hash)")
-    key_input = None
-    if use_hmac:
-        key_input = st.text_input("HMAC Key", type="password")
-
-    if st.button("Generate Hash") and inp and check_usage_limit(user):
-        try:
-            if "SHA-256" in algo:
-                hash_func = hashlib.sha256
-            elif "SHA-512" in algo:
-                hash_func = hashlib.sha512
-            else:
-                hash_func = hashlib.md5
-
-            if use_hmac and key_input:
-                digest = hmac.new(
-                    key_input.encode(),
-                    inp.encode(),
-                    hash_func
-                ).hexdigest()
-            else:
-                digest = hash_func(inp.encode()).hexdigest()
-
-            st.session_state.hash_output = digest
-            increment_usage(user, f"HASH_{algo.replace(' ', '_')}")
-
-        except Exception as e:
-            st.error(f"Hashing Failed: {e}")
-
-    if st.session_state.get("hash_output"):
-        st.success("✅ Hash Generated")
-        st.code(st.session_state.hash_output)
-
-
-# ============================================================
-# STEGANOGRAPHY MODULE — PRO-GRADE COMMERCIAL
+# STEGANOGRAPHY MODULE 
 # ============================================================
 # ---------------- Logging Setup ----------------
 LOG_FILE = "stego_activity.log"
